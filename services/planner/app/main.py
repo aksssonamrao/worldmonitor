@@ -251,9 +251,9 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
         end_index = routing.End(v_idx)
         time_dim.CumulVar(end_index).SetRange(0, v.max_route_time_min)
 
-    for idx in range(depot_count, node_count):
-        routing.AddDisjunction([manager.NodeToIndex(idx)], 10_000_000)
-
+    # Do not add disjunctions with penalties here: making all jobs optional
+    # would allow the solver to drop visits while the API reports that all
+    # constraints were satisfied.
     params = pywrapcp.DefaultRoutingSearchParameters()
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT
