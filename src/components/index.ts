@@ -30,3 +30,6 @@ export * from './PredictionPanel';
 export * from './MacroSignalsPanel';
 export * from './ETFFlowsPanel';
 export * from './LiquidityPanel';
+export * from './HeatmapPanel';
+export * from './CommoditiesPanel';
+export * from './DigitalPanel';
