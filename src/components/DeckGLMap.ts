@@ -2182,20 +2182,35 @@ export class DeckGLMap {
   private renderCompoundDrawer(): void {
     const drawer = this.container.querySelector('.compound-alerts-drawer') as HTMLElement | null;
     if (!drawer) return;
-    drawer.innerHTML = this.compoundAlerts
-      .map((alert) => `<button class="compound-alert-item" data-alert-id="${escapeHtml(alert.id)}">${escapeHtml(String(alert.properties.title || alert.properties.name || 'Alert'))}<span>${alert.score.toFixed(2)}</span></button>`)
-      .join('');
 
-    drawer.querySelectorAll('.compound-alert-item').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = (el as HTMLElement).dataset.alertId;
+    // Attach a single delegated click handler once to avoid per-item listeners
+    const anyDrawer = drawer as HTMLElement & { _compoundClickHandlerAttached?: boolean };
+    if (!anyDrawer._compoundClickHandlerAttached) {
+      drawer.addEventListener('click', (event: MouseEvent) => {
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        const item = target.closest('.compound-alert-item') as HTMLElement | null;
+        if (!item) return;
+
+        const id = item.dataset.alertId;
         const alert = this.compoundAlerts.find((a) => a.id === id) || null;
         if (!alert) return;
+
         this.selectedCompoundAlert = alert;
         this.setCompoundDetail(alert);
         this.setCenter(alert.lat, alert.lon, Math.max(this.maplibreMap?.getZoom() || 4, 4));
       });
-    });
+      anyDrawer._compoundClickHandlerAttached = true;
+    }
+
+    drawer.innerHTML = this.compoundAlerts
+      .map(
+        (alert) =>
+          `<button class="compound-alert-item" data-alert-id="${escapeHtml(alert.id)}">${escapeHtml(
+            String(alert.properties.title || alert.properties.name || 'Alert'),
+          )}<span>${alert.score.toFixed(2)}</span></button>`,
+      )
+      .join('');
   }
 
   private async loadCompoundRiskData(): Promise<void> {
