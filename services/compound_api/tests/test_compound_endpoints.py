@@ -100,7 +100,8 @@ def test_cache_reduces_http_calls(configured_app):
     client.post('/compound/hazards/generate', json=body)
     first = weather.calls
     client.post('/compound/hazards/generate', json=body)
-    assert weather.calls == first * 2  # fetch is still called per point; cache prevents sample writes
+    # On identical requests, cached data should be reused so no additional weather HTTP calls are made.
+    assert weather.calls == first
     assert app_obj.state.storage.latest_run()['cache_hits'] > 0
 
 
