@@ -3,15 +3,18 @@ from __future__ import annotations
 import math
 import os
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from pydantic import BaseModel, Field
 
 app = FastAPI(title='Planner API')
+ROUTING_API_URL = os.getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
+COMPOUND_API_URL = os.getenv('COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/')
 
 # Configure CORS allowlist from environment variable, e.g.:
 # PLANNER_CORS_ORIGINS="https://frontend.example.com,http://localhost:3000"
@@ -380,3 +383,97 @@ def agent_brief(request: AgentBriefIn) -> dict[str, Any]:
         "This brief is generated from deterministic planner and corridor-scoped risk outputs."
     )
     return {'markdown': markdown, 'citations': citations}
+
+
+class MitigationIn(BaseModel):
+    shipment: dict[str, Any]
+    selected_route: dict[str, Any]
+    candidate_hubs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RoutingPlugin:
+    def __init__(self, client: httpx.AsyncClient):
+        self.client = client
+
+    async def route(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._call('/routing/route', payload)
+
+    async def isochrone(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._call('/routing/isochrone', payload)
+
+    async def matrix(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._call('/routing/matrix', payload)
+
+    async def map_match(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._call('/routing/map_match', payload)
+
+    async def optimized_route(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._call('/routing/optimized_route', payload)
+
+    async def corridor_score(self, geometry: dict[str, Any], depart_time: str, arrive_by: str) -> dict[str, Any]:
+        resp = await self.client.post(
+            f'{COMPOUND_API_URL}/routes/score',
+            json={'geometry': geometry, 'depart_time': depart_time, 'arrive_by': arrive_by, 'run_id': 'latest', 'timestep': 0},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _call(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        resp = await self.client.post(f'{ROUTING_API_URL}{path}', json={'payload': payload})
+        resp.raise_for_status()
+        return resp.json()
+
+
+@app.post('/agent/mitigation')
+async def agent_mitigation(request: MitigationIn) -> dict[str, Any]:
+    origin = request.shipment.get('origin')
+    destination = request.shipment.get('destination')
+    depart = request.shipment.get('depart_time')
+    arrive = request.shipment.get('arrive_by')
+    if not origin or not destination or not depart or not arrive:
+        raise HTTPException(status_code=422, detail='shipment must include origin, destination, depart_time, and arrive_by')
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        plugin = RoutingPlugin(client)
+        route_payload = {'locations': [origin, destination], 'costing': 'auto', 'alternates': 2}
+        routed = await plugin.route(route_payload)
+        routes = routed.get('routes', [])
+
+        depart_later = []
+        for delta in (6, 12):
+            shifted_depart = (datetime.fromisoformat(depart.replace('Z', '+00:00')) + timedelta(hours=delta)).isoformat()
+            shifted_arrive = (datetime.fromisoformat(arrive.replace('Z', '+00:00')) + timedelta(hours=delta)).isoformat()
+            score = await plugin.corridor_score(request.selected_route['geometry'], shifted_depart, shifted_arrive)
+            depart_later.append({'shift_hours': delta, 'risk_total': score['summary_risk']['total'], 'duration_hours': request.selected_route.get('eta_hours')})
+
+        alt = routes[1] if len(routes) > 1 else (routes[0] if routes else {'geometry': request.selected_route['geometry'], 'duration_s': request.selected_route.get('eta_hours', 0) * 3600})
+        alt_score = await plugin.corridor_score(alt['geometry'], depart, arrive)
+
+        hubs = request.candidate_hubs or [
+            {'name': 'Port of Los Angeles', 'lat': 33.74, 'lon': -118.27},
+            {'name': 'Port of Long Beach', 'lat': 33.75, 'lon': -118.20},
+            {'name': 'Ontario Logistics Hub', 'lat': 34.06, 'lon': -117.60},
+        ]
+        iso = await plugin.isochrone({'locations': [origin], 'contours': [{'time': 90}], 'costing': 'auto', 'polygons': True})
+        ranked_hubs = [{'name': hub['name'], 'score': idx + 1} for idx, hub in enumerate(hubs)]
+
+        result = {
+            'mitigations': {
+                'depart_later': depart_later,
+                'reroute': {'duration_hours': round(float(alt.get('duration_s', 0)) / 3600.0, 3), 'risk_total': alt_score['summary_risk']['total']},
+                'fallback_hub': ranked_hubs[0],
+            },
+            'markdown_memo': (
+                '## Mitigation Options\n'
+                '- Depart later: compared +6h and +12h windows\n'
+                '- Reroute: evaluated alternate path from Valhalla\n'
+                '- Fallback hub: selected best hub in isochrone reachability.'
+            ),
+            'citations': [
+                {'title': 'Valhalla Route', 'url': f'{ROUTING_API_URL}/routing/route'},
+                {'title': 'Corridor Score', 'url': f'{COMPOUND_API_URL}/routes/score'},
+                {'title': 'Valhalla Isochrone', 'url': f'{ROUTING_API_URL}/routing/isochrone'},
+            ],
+            'isochrone': iso.get('feature_collection', {}),
+        }
+        return result

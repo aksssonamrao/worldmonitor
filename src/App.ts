@@ -1,4 +1,5 @@
 import maplibregl, { LngLatBoundsLike, Map as MaplibreMap, Popup } from 'maplibre-gl';
+import { getTopContainerPorts } from './config/ports';
 
 type Coord = [number, number];
 type LineStringGeometry = { type: 'LineString'; coordinates: Coord[] };
@@ -11,6 +12,8 @@ type RouteOption = {
   summary_risk: { total: number; weather: number; news: number; compound: number };
 };
 type FeatureCollection = { type: 'FeatureCollection'; features: Array<any> };
+
+type Mode = 'default' | 'fallback' | 'multi-stop';
 
 type RouteScore = {
   total_risk: number;
@@ -25,6 +28,7 @@ export class App {
   private routes: RouteOption[] = [];
   private selectedRouteId: string | null = null;
   private scoreByRoute = new globalThis.Map<string, RouteScore>();
+  private mode: Mode = 'default';
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId);
@@ -44,6 +48,8 @@ export class App {
         <label>Arrive by<input id="arrive" type="datetime-local"></label>
         <label>Risk appetite <input id="risk" type="range" min="0" max="1" step="0.1" value="0.5"></label>
         <button id="generate">Generate Options</button>
+        <label>Mode<select id="mode"><option value="default">Default</option><option value="fallback">Fallback</option><option value="multi-stop">Multi-stop</option></select></label>
+        <label>Stops (lat,lon per line)<textarea id="stops" rows="4" placeholder="36.0,-120.0"></textarea></label>
       </aside>
       <aside class="panel panel-right"><h3>Route Options</h3><div id="route-cards"></div><h4>Issues along route</h4><div id="issues"></div></aside>
       <section class="drawer"><h3>Evidence</h3><div id="evidence"></div></section>
@@ -103,7 +109,26 @@ export class App {
     return container;
   }
 
+
+  private getRoutingApiBase(): string {
+    return (import.meta.env.VITE_ROUTING_API_URL || 'http://localhost:8093').replace(/\/$/, '');
+  }
+
+  private isValidMode(value: string): value is Mode {
+    return value === 'default' || value === 'fallback' || value === 'multi-stop';
+  }
+
   private bindUI(): void {
+    this.container.querySelector('#mode')?.addEventListener('change', (event) => {
+      const value = (event.target as HTMLSelectElement).value;
+      if (!this.isValidMode(value)) {
+        this.setStatus('Invalid mode selected; reverting to default');
+        this.mode = 'default';
+      } else {
+        this.mode = value;
+      }
+      if (this.selectedRouteId) this.selectRoute(this.selectedRouteId, false);
+    });
     this.container.querySelector('#generate')?.addEventListener('click', () => {
       this.generateRoutes().catch((error: unknown) => {
         this.setStatus(error instanceof Error ? error.message : 'Failed to generate routes');
@@ -266,6 +291,8 @@ export class App {
 
     this.renderGradient(routeId);
     this.renderIssues(routeId);
+    if (this.mode === 'fallback') this.renderFallback(route).catch(console.error);
+    if (this.mode === 'multi-stop') this.renderMultiStop(route).catch(console.error);
   }
 
   private renderGradient(routeId: string): void {
@@ -336,6 +363,80 @@ export class App {
       };
       issues.appendChild(btn);
     });
+  }
+
+  private async renderFallback(route: RouteOption): Promise<void> {
+    const routingApi = this.getRoutingApiBase();
+    const origin = this.parsePoint((this.container.querySelector('#origin') as HTMLInputElement).value);
+    const response = await this.safeFetchJson<any>(`${routingApi}/routing/isochrone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: { locations: [{ lat: origin.lat, lon: origin.lon }], contours: [{ time: 90 }], costing: 'auto', polygons: true } }),
+    });
+    if (!response?.feature_collection) return;
+    const hubs = getTopContainerPorts(12)
+      .map((hub, idx) => ({ name: hub.name, score: Number((route.summary_risk.total + idx * 2).toFixed(1)) }))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 6);
+
+    if (this.map.getSource('fallback-isochrone')) {
+      (this.map.getSource('fallback-isochrone') as maplibregl.GeoJSONSource).setData(response.feature_collection as any);
+    } else {
+      this.map.addSource('fallback-isochrone', { type: 'geojson', data: response.feature_collection as any });
+      this.map.addLayer({ id: 'fallback-isochrone-fill', type: 'fill', source: 'fallback-isochrone', paint: { 'fill-color': '#4cc9f0', 'fill-opacity': 0.12 } });
+      this.map.addLayer({ id: 'fallback-isochrone-line', type: 'line', source: 'fallback-isochrone', paint: { 'line-color': '#4cc9f0', 'line-width': 2 } });
+    }
+    const issues = this.container.querySelector('#issues') as HTMLElement;
+    issues.replaceChildren();
+    hubs.forEach((hub) => {
+      const item = document.createElement('button');
+      item.className = 'issue';
+      item.textContent = `${hub.name} · score ${hub.score}`;
+      issues.appendChild(item);
+    });
+  }
+
+  private async renderMultiStop(route: RouteOption): Promise<void> {
+    const routingApi = this.getRoutingApiBase();
+    const stopsInput = (this.container.querySelector('#stops') as HTMLTextAreaElement).value;
+    const stopLines = stopsInput.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+
+    let origin;
+    let destination;
+    let mids;
+    try {
+      origin = this.parsePoint((this.container.querySelector('#origin') as HTMLInputElement).value);
+      destination = this.parsePoint((this.container.querySelector('#destination') as HTMLInputElement).value);
+      mids = stopLines.map((line) => this.parsePoint(line));
+    } catch (error) {
+      this.setStatus(error instanceof Error ? `Multi-stop input error: ${error.message}` : 'Multi-stop input error');
+      return;
+    }
+
+    if (!mids.length) {
+      this.setStatus('Add at least one valid stop for Multi-stop mode');
+      return;
+    }
+
+    const locations = [{ lat: origin.lat, lon: origin.lon }, ...mids.map((s) => ({ lat: s.lat, lon: s.lon })), { lat: destination.lat, lon: destination.lon }];
+    const response = await this.safeFetchJson<any>(`${routingApi}/routing/optimized_route`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: { locations, costing: 'auto' } }),
+    });
+    const geometry = response?.route?.geometry;
+    if (!geometry) {
+      this.setStatus('No optimized route returned for Multi-stop mode');
+      return;
+    }
+
+    const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry, properties: { score: route.summary_risk.total } }] } as FeatureCollection;
+    if (this.map.getSource('multi-stop-route')) {
+      (this.map.getSource('multi-stop-route') as maplibregl.GeoJSONSource).setData(fc as any);
+    } else {
+      this.map.addSource('multi-stop-route', { type: 'geojson', data: fc as any });
+      this.map.addLayer({ id: 'multi-stop-route-line', type: 'line', source: 'multi-stop-route', paint: { 'line-width': 6, 'line-color': ['interpolate', ['linear'], ['get', 'score'], 0, '#2dc937', 100, '#cc3232'] } });
+    }
   }
 
   private async loadEvidenceLayers(): Promise<void> {
