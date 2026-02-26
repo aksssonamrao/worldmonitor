@@ -39,7 +39,7 @@ services:
       MAX_QPS: ${MAX_QPS:-5}
       EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
       ALERT_SCORE_THRESHOLD: ${ALERT_SCORE_THRESHOLD:-20}
-      EVENT_TYPE_WEIGHTS_JSON: '${EVENT_TYPE_WEIGHTS_JSON:-{"PROTEST":1.2,"STRIKE":1.2,"CONFLICT":1.5,"DISASTER":1.4,"OUTAGE":1.3,"ACCIDENT":1.1,"OTHER":1.0}}'
+      EVENT_TYPE_WEIGHTS_JSON: ${EVENT_TYPE_WEIGHTS_JSON:-{"PROTEST":1.2,"STRIKE":1.2,"CONFLICT":1.5,"DISASTER":1.4,"OUTAGE":1.3,"ACCIDENT":1.1,"OTHER":1.0}}
     ports:
       - "8090:8090"
     depends_on:
@@ -65,8 +65,8 @@ services:
       FOCUS_COUNTRIES: ${FOCUS_COUNTRIES:-IN,AE,GB,US}
       FOCUS_REGIONS: ${FOCUS_REGIONS:-EUROPE}
       EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
-    ports:
-      - "8092:8092"
+    expose:
+      - "8092"
     depends_on:
       postgis:
         condition: service_healthy
@@ -107,8 +107,6 @@ services:
       - "3000:3000"
     depends_on:
       compound_api:
-        condition: service_healthy
-      ingestor:
         condition: service_healthy
       planner:
         condition: service_healthy

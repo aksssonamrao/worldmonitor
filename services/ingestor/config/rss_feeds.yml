@@ -1,4 +1,5 @@
-eu_bboxes:
+# Europe-only bounding boxes used for optional regional query expansion.
+europe_bboxes:
   - [-10.0, 35.0, 5.0, 45.0]
   - [5.0, 45.0, 20.0, 55.0]
   - [20.0, 55.0, 35.0, 65.0]

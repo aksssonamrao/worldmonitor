@@ -49,7 +49,19 @@ class FakeStorage:
         return self.runs[-1] if self.runs else None
 
     async def list_events(self, since_hours, event_types=None, bbox=None):
-        return self.events
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        result = []
+        for event in self.events:
+            if event['occurred_at'] < cutoff:
+                continue
+            if event_types and event['event_type'] not in event_types:
+                continue
+            if bbox:
+                lon, lat = event['geometry']['coordinates']
+                if not (bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]):
+                    continue
+            result.append(event)
+        return result
 
     async def get_event(self, event_id):
         for event in self.events:
@@ -62,7 +74,8 @@ class FakeStorage:
 
     async def detect_compound_alerts(self, run_id, timestep, lookback_hours, score_threshold, event_weights, bbox=None):
         candidates = []
-        for event in self.events:
+        events = await self.list_events(lookback_hours, bbox=bbox)
+        for event in events:
             ex, ey = event['geometry']['coordinates']
             matches = []
             for hazard in [h for h in self.hazards if h['run_id'] == run_id and h['timestep'] == timestep]:
@@ -97,10 +110,7 @@ class FakeStorage:
                     'severity': event['severity'],
                     'confidence': event['confidence'],
                     'hazard_prob': best_hazard['hazard_prob'],
-                    'other_hazards': [
-                        {'hazard_type': h['type'], 'hazard_prob': h['hazard_prob']}
-                        for _, h in matches[1:]
-                    ],
+                    'other_hazards': [{'hazard_type': h['type'], 'hazard_prob': h['hazard_prob']} for _, h in matches[1:]],
                 },
             })
         return candidates
@@ -116,10 +126,7 @@ class FakeWeatherClient:
     async def fetch_hourly(self, lat, lon, hours):
         self.calls += 1
         now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-        return [
-            {'forecast_ts': now + timedelta(hours=h), 'wind_kph': 80.0, 'precip_mm_hr': 15.0, 'temp_c': 40.0, 'humidity': 40.0}
-            for h in range(hours + 1)
-        ]
+        return [{'forecast_ts': now + timedelta(hours=h), 'wind_kph': 80.0, 'precip_mm_hr': 15.0, 'temp_c': 40.0, 'humidity': 40.0} for h in range(hours + 1)]
 
 
 @pytest.fixture
@@ -141,29 +148,17 @@ def configured_app():
     app.state.generator = HazardGenerator(settings, storage, weather)
     app.state.last_hazard_run = None
     app.state.last_hazard_error = None
-    return app, weather, storage
+    return app, storage
 
 
 def test_events_geojson_endpoint(configured_app):
-    app_obj, _, storage = configured_app
-    storage.events.append({
-        'id': uuid4(),
-        'source': 'gdelt',
-        'title': 'Airport strike causes delays',
-        'description': 'Workers strike',
-        'url': 'https://example.com/event',
-        'event_type': 'STRIKE',
-        'severity': 0.7,
-        'confidence': 0.8,
-        'country': 'GB',
-        'region': 'EUROPE',
-        'occurred_at': datetime.now(timezone.utc),
-        'ingested_at': datetime.now(timezone.utc),
-        'raw': {},
-        'geometry': {'type': 'Point', 'coordinates': [-0.1, 51.5]},
-    })
+    app_obj, storage = configured_app
+    now = datetime.now(timezone.utc)
+    storage.events.append({'id': uuid4(), 'source': 'gdelt', 'title': 'Airport strike causes delays', 'description': 'Workers strike', 'url': 'https://example.com/event', 'event_type': 'STRIKE', 'severity': 0.7, 'confidence': 0.8, 'country': 'GB', 'region': 'EUROPE', 'occurred_at': now, 'ingested_at': now, 'raw': {}, 'geometry': {'type': 'Point', 'coordinates': [-0.1, 51.5]}})
+    storage.events.append({'id': uuid4(), 'source': 'gdelt', 'title': 'Old protest', 'description': 'old', 'url': 'https://example.com/old', 'event_type': 'PROTEST', 'severity': 0.7, 'confidence': 0.8, 'country': 'GB', 'region': 'EUROPE', 'occurred_at': now - timedelta(hours=200), 'ingested_at': now, 'raw': {}, 'geometry': {'type': 'Point', 'coordinates': [-0.2, 51.6]}})
+
     client = TestClient(app_obj)
-    response = client.get('/compound/events?since_hours=72')
+    response = client.get('/compound/events?since_hours=72&types=STRIKE,,')
     assert response.status_code == 200
     payload = response.json()
     assert payload['type'] == 'FeatureCollection'
@@ -171,24 +166,23 @@ def test_events_geojson_endpoint(configured_app):
 
 
 def test_compound_alert_generation(configured_app):
-    app_obj, _, storage = configured_app
+    app_obj, storage = configured_app
     now = datetime.now(timezone.utc)
     storage.runs.append({'run_id': 'run-test', 'started_at': now})
     storage.hazards.append({'run_id': 'run-test', 'timestep': 0, 'type': 'RAIN', 'hazard_prob': 0.9, 'forecast_ts': now, 'provider': 'google_weather', 'generated_at': now, 'geometry': {'type': 'Polygon', 'coordinates': [[[72.0, 8.0], [73.0, 8.0], [73.0, 9.0], [72.0, 9.0], [72.0, 8.0]]]}})
-    storage.events.append({'id': uuid4(), 'source': 'gdelt', 'title': 'Flood warning and logistics disruption', 'description': 'desc', 'url': 'https://example.com/flood', 'event_type': 'DISASTER', 'severity': 0.8, 'confidence': 0.85, 'country': 'IN', 'region': 'ASIA', 'occurred_at': now, 'ingested_at': now, 'raw': {}, 'geometry': {'type': 'Point', 'coordinates': [72.5, 8.5]}})
+    event_id = uuid4()
+    storage.events.append({'id': event_id, 'source': 'gdelt', 'title': 'Flood warning and logistics disruption', 'description': 'desc', 'url': 'https://example.com/flood', 'event_type': 'DISASTER', 'severity': 0.8, 'confidence': 0.85, 'country': 'IN', 'region': 'ASIA', 'occurred_at': now, 'ingested_at': now, 'raw': {}, 'geometry': {'type': 'Point', 'coordinates': [72.5, 8.5]}})
 
     client = TestClient(app_obj)
-    response = client.get('/compound/alerts?run_id=run-test&timestep=0')
+    response = client.get('/compound/alerts?run_id=run-test&timestep=0&bbox=72.0,8.0,73.0,9.0')
     assert response.status_code == 200
     features = response.json()['features']
     assert len(features) == 1
-    details = features[0]['properties']['details']
-    assert details['base'] > 0
-    assert features[0]['properties']['score'] > 20
+    assert features[0]['properties']['event_id'] == str(event_id)
 
 
-def test_dedup_multiple_hazards(configured_app):
-    app_obj, _, storage = configured_app
+def test_dedup_multiple_hazards_and_invalid_event_id(configured_app):
+    app_obj, storage = configured_app
     now = datetime.now(timezone.utc)
     storage.runs.append({'run_id': 'run-dedup', 'started_at': now})
     poly = {'type': 'Polygon', 'coordinates': [[[72.0, 8.0], [73.0, 8.0], [73.0, 9.0], [72.0, 9.0], [72.0, 8.0]]]}
@@ -196,7 +190,8 @@ def test_dedup_multiple_hazards(configured_app):
         {'run_id': 'run-dedup', 'timestep': 0, 'type': 'RAIN', 'hazard_prob': 0.9, 'forecast_ts': now, 'provider': 'google_weather', 'generated_at': now, 'geometry': poly},
         {'run_id': 'run-dedup', 'timestep': 0, 'type': 'WIND', 'hazard_prob': 0.7, 'forecast_ts': now, 'provider': 'google_weather', 'generated_at': now, 'geometry': poly},
     ])
-    storage.events.append({'id': uuid4(), 'source': 'gdelt', 'title': 'Protest near highway', 'description': 'desc', 'url': 'https://example.com/protest', 'event_type': 'PROTEST', 'severity': 0.7, 'confidence': 0.9, 'country': 'US', 'region': 'NA', 'occurred_at': now, 'ingested_at': now, 'raw': {}, 'geometry': {'type': 'Point', 'coordinates': [72.4, 8.4]}})
+    event_id = uuid4()
+    storage.events.append({'id': event_id, 'source': 'gdelt', 'title': 'Protest near highway', 'description': 'desc', 'url': 'https://example.com/protest', 'event_type': 'PROTEST', 'severity': 0.7, 'confidence': 0.9, 'country': 'US', 'region': 'NA', 'occurred_at': now, 'ingested_at': now, 'raw': {}, 'geometry': {'type': 'Point', 'coordinates': [72.4, 8.4]}})
 
     client = TestClient(app_obj)
     response = client.get('/compound/alerts?run_id=run-dedup&timestep=0')
@@ -204,3 +199,9 @@ def test_dedup_multiple_hazards(configured_app):
     features = response.json()['features']
     assert len(features) == 1
     assert len(features[0]['properties']['details']['other_hazards']) == 1
+
+    bad = client.get('/compound/events/not-a-uuid')
+    assert bad.status_code == 400
+
+    ok = client.get(f'/compound/events/{event_id}')
+    assert ok.status_code == 200

@@ -48,28 +48,90 @@ export class App {
       this.fetchFeatures('/compound/alerts?run_id=latest&timestep=0'),
     ]);
 
-    eventsPanel.innerHTML = this.renderList(
-      events,
-      (f) => `${f.properties.title} · ${f.properties.event_type} · ${f.properties.country} · <a href="${f.properties.url}" target="_blank">source</a>`,
-    );
-    alertsPanel.innerHTML = this.renderList(
-      alerts,
-      (f) => `${f.properties.title} · ${f.properties.hazard_type} · score=${Number(f.properties.score).toFixed(1)} · <a href="${f.properties.url}" target="_blank">source</a>`,
-    );
+    eventsPanel.replaceChildren(this.renderList(events, (f) => this.createEventItem(f)));
+    alertsPanel.replaceChildren(this.renderList(alerts, (f) => this.createAlertItem(f)));
   }
 
-  private renderList(features: Feature[], mapper: (feature: Feature) => string): string {
-    if (!features.length) return '<p style="opacity:.75">No items</p>';
-    return `<ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">${features
-      .map((f) => `<li>${mapper(f)}</li>`)
-      .join('')}</ul>`;
+  private renderList(features: Feature[], mapper: (feature: Feature) => HTMLElement): HTMLElement {
+    if (!features.length) {
+      const p = document.createElement('p');
+      p.style.opacity = '0.75';
+      p.textContent = 'No items';
+      return p;
+    }
+    const list = document.createElement('ul');
+    list.style.margin = '0';
+    list.style.paddingLeft = '18px';
+    list.style.display = 'flex';
+    list.style.flexDirection = 'column';
+    list.style.gap = '6px';
+    for (const feature of features) {
+      const item = document.createElement('li');
+      item.appendChild(mapper(feature));
+      list.appendChild(item);
+    }
+    return list;
+  }
+
+  private createEventItem(feature: Feature): HTMLElement {
+    const wrapper = document.createElement('span');
+    wrapper.textContent = `${String(feature.properties.title ?? 'Untitled')} · ${String(feature.properties.event_type ?? 'OTHER')} · ${String(feature.properties.country ?? 'Unknown')} · `;
+    wrapper.appendChild(this.createSourceLink(feature.properties.url));
+    return wrapper;
+  }
+
+  private createAlertItem(feature: Feature): HTMLElement {
+    const wrapper = document.createElement('span');
+    const score = Number(feature.properties.score ?? 0);
+    wrapper.textContent = `${String(feature.properties.title ?? 'Untitled')} · ${String(feature.properties.hazard_type ?? 'N/A')} · score=${score.toFixed(1)} · `;
+    wrapper.appendChild(this.createSourceLink(feature.properties.url));
+    return wrapper;
+  }
+
+  private createSourceLink(urlValue: unknown): HTMLAnchorElement | Text {
+    const url = typeof urlValue === 'string' ? urlValue : '';
+    const parsed = this.safeHttpUrl(url);
+    if (!parsed) {
+      return document.createTextNode('source unavailable');
+    }
+    const anchor = document.createElement('a');
+    anchor.href = parsed;
+    anchor.textContent = 'source';
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    return anchor;
+  }
+
+  private safeHttpUrl(input: string): string | null {
+    try {
+      const parsed = new URL(input);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.toString();
+      }
+    } catch {
+      return null;
+    }
+    return null;
   }
 
   private async fetchFeatures(path: string): Promise<Feature[]> {
     const baseUrl = (import.meta.env.VITE_COMPOUND_API_URL || 'http://localhost:8090').replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}${path}`);
-    if (!response.ok) return [];
-    const payload = await response.json();
-    return payload.features || [];
+    try {
+      const response = await fetch(`${baseUrl}${path}`);
+      if (!response.ok) {
+        const body = await response.text();
+        console.error('fetchFeatures request failed', { path, status: response.status, statusText: response.statusText, body });
+        return [];
+      }
+      const payload = await response.json();
+      if (!payload || !Array.isArray(payload.features)) {
+        console.error('fetchFeatures invalid payload', { path, payload });
+        return [];
+      }
+      return payload.features as Feature[];
+    } catch (error) {
+      console.error('fetchFeatures exception', { path, error });
+      return [];
+    }
   }
 }

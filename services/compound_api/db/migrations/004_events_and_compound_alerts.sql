@@ -1,9 +1,17 @@
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS sources (
+    name TEXT PRIMARY KEY
+);
+
+INSERT INTO sources(name)
+VALUES ('gdelt'), ('reliefweb'), ('rss')
+ON CONFLICT (name) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source TEXT NOT NULL CHECK (source IN ('gdelt', 'reliefweb', 'rss')),
+    source TEXT NOT NULL REFERENCES sources(name),
     source_event_id TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
@@ -25,7 +33,7 @@ CREATE INDEX IF NOT EXISTS events_occurred_at_idx ON events (occurred_at DESC);
 CREATE INDEX IF NOT EXISTS events_event_type_idx ON events (event_type);
 
 CREATE TABLE IF NOT EXISTS ingestion_state (
-    source TEXT PRIMARY KEY,
+    source TEXT PRIMARY KEY REFERENCES sources(name),
     cursor JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -47,5 +55,6 @@ CREATE TABLE IF NOT EXISTS compound_alerts (
 );
 
 CREATE INDEX IF NOT EXISTS compound_alerts_run_timestep_idx ON compound_alerts (run_id, timestep);
+CREATE INDEX IF NOT EXISTS compound_alerts_event_id_idx ON compound_alerts (event_id);
 CREATE INDEX IF NOT EXISTS compound_alerts_geom_idx ON compound_alerts USING GIST (geom);
 CREATE INDEX IF NOT EXISTS compound_alerts_score_idx ON compound_alerts (score DESC);

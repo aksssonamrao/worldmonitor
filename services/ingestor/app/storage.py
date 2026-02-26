@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -12,20 +11,27 @@ class IngestStorage:
         self.database_url = database_url
         self.pool: asyncpg.Pool | None = None
 
+    @property
+    def _pool(self) -> asyncpg.Pool:
+        if self.pool is None:
+            raise RuntimeError('Storage not connected. Call connect() first.')
+        return self.pool
+
     async def connect(self) -> None:
         self.pool = await asyncpg.create_pool(self.database_url)
 
     async def close(self) -> None:
         if self.pool:
             await self.pool.close()
+            self.pool = None
 
     async def get_cursor(self, source: str) -> dict[str, Any]:
-        async with self.pool.acquire() as conn:
+        async with self._pool.acquire() as conn:
             row = await conn.fetchrow('SELECT cursor FROM ingestion_state WHERE source=$1', source)
             return dict(row['cursor']) if row else {}
 
     async def upsert_cursor(self, source: str, cursor: dict[str, Any]) -> None:
-        async with self.pool.acquire() as conn:
+        async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO ingestion_state (source, cursor, updated_at)
@@ -37,7 +43,7 @@ class IngestStorage:
             )
 
     async def insert_event(self, event: dict[str, Any]) -> None:
-        async with self.pool.acquire() as conn:
+        async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO events (
@@ -55,6 +61,6 @@ class IngestStorage:
             )
 
     async def list_ingestion_state(self) -> dict[str, str]:
-        async with self.pool.acquire() as conn:
+        async with self._pool.acquire() as conn:
             rows = await conn.fetch('SELECT source, updated_at FROM ingestion_state')
         return {r['source']: r['updated_at'].isoformat() for r in rows}

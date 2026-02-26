@@ -211,7 +211,7 @@ class Storage:
                        country, region, occurred_at, ingested_at, raw,
                        ST_AsGeoJSON(geom::geometry)::json AS geometry
                 FROM events
-                WHERE id = $1
+                WHERE id = $1::uuid
                 """,
                 event_id,
             )
@@ -294,25 +294,33 @@ class Storage:
                     current['details']['other_hazards'].append({'hazard_type': payload['hazard_type'], 'hazard_prob': payload['hazard_prob'], 'score': payload['score']})
 
             results = [item for item in best_by_event.values() if item['score'] >= score_threshold]
-            await conn.execute('DELETE FROM compound_alerts WHERE run_id = $1 AND timestep = $2', run_id, timestep)
-            for alert in results:
-                await conn.execute(
-                    """
-                    INSERT INTO compound_alerts (run_id, timestep, score, event_id, hazard_type, hazard_prob, forecast_ts, geom, details)
-                    VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, ST_GeogFromText($8), $9::jsonb)
-                    ON CONFLICT (run_id, timestep, event_id)
-                    DO UPDATE SET score = EXCLUDED.score, hazard_type = EXCLUDED.hazard_type,
-                                  hazard_prob = EXCLUDED.hazard_prob, forecast_ts = EXCLUDED.forecast_ts,
-                                  geom = EXCLUDED.geom, details = EXCLUDED.details, created_at = NOW()
-                    """,
-                    run_id,
-                    timestep,
-                    alert['score'],
-                    alert['event_id'],
-                    alert['hazard_type'],
-                    alert['hazard_prob'],
-                    alert['forecast_ts'],
-                    f"SRID=4326;POINT({alert['geometry']['coordinates'][0]} {alert['geometry']['coordinates'][1]})",
-                    json.dumps(alert['details']),
-                )
+            async with conn.transaction():
+                await conn.execute('DELETE FROM compound_alerts WHERE run_id = $1 AND timestep = $2', run_id, timestep)
+                for alert in results:
+                    geometry = alert.get('geometry')
+                    if geometry is None:
+                        raise RuntimeError(f"Missing geometry for alert event_id={alert.get('event_id')}")
+                    try:
+                        geometry_json = json.dumps(geometry)
+                    except (TypeError, ValueError) as exc:
+                        raise RuntimeError(f"Invalid geometry for alert event_id={alert.get('event_id')}: {exc}") from exc
+                    await conn.execute(
+                        """
+                        INSERT INTO compound_alerts (run_id, timestep, score, event_id, hazard_type, hazard_prob, forecast_ts, geom, details)
+                        VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, ST_SetSRID(ST_GeomFromGeoJSON($8), 4326)::geography, $9::jsonb)
+                        ON CONFLICT (run_id, timestep, event_id)
+                        DO UPDATE SET score = EXCLUDED.score, hazard_type = EXCLUDED.hazard_type,
+                                      hazard_prob = EXCLUDED.hazard_prob, forecast_ts = EXCLUDED.forecast_ts,
+                                      geom = EXCLUDED.geom, details = EXCLUDED.details, created_at = NOW()
+                        """,
+                        run_id,
+                        timestep,
+                        alert['score'],
+                        alert['event_id'],
+                        alert['hazard_type'],
+                        alert['hazard_prob'],
+                        alert['forecast_ts'],
+                        geometry_json,
+                        json.dumps(alert['details']),
+                    )
         return sorted(results, key=lambda x: x['score'], reverse=True)

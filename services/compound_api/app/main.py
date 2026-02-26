@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from os import getenv
 from typing import Any
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
 
@@ -157,7 +158,7 @@ async def get_events(
     types: str | None = None,
 ) -> dict[str, Any]:
     parsed_bbox = _parse_bbox(bbox)
-    type_list = [part.strip().upper() for part in types.split(',')] if types else None
+    type_list = [part.strip().upper() for part in types.split(',') if part.strip()] if types else None
     events = await app.state.storage.list_events(since_hours=since_hours, event_types=type_list, bbox=parsed_bbox)
     return {
         'type': 'FeatureCollection',
@@ -186,7 +187,11 @@ async def get_events(
 
 @app.get('/compound/events/{event_id}')
 async def get_event(event_id: str) -> dict[str, Any]:
-    event = await app.state.storage.get_event(event_id)
+    try:
+        parsed_event_id = UUID(event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='invalid event_id') from exc
+    event = await app.state.storage.get_event(str(parsed_event_id))
     if not event:
         raise HTTPException(status_code=404, detail='event not found')
     event['id'] = str(event['id'])
