@@ -16,6 +16,8 @@ class Settings:
     focus_countries: list[str]
     focus_regions: list[str]
     gdelt_lookback_hours: int
+    monitoring_interval_minutes: int
+    compound_api_url: str
 
 
 def _as_bool(name: str, default: bool) -> bool:
@@ -36,4 +38,6 @@ def load_settings() -> Settings:
         focus_countries=[c.strip().upper() for c in getenv('FOCUS_COUNTRIES', 'IN,AE,GB,US').split(',') if c.strip()],
         focus_regions=[r.strip().upper() for r in getenv('FOCUS_REGIONS', 'EUROPE').split(',') if r.strip()],
         gdelt_lookback_hours=int(getenv('EVENT_LOOKBACK_HOURS', '72')),
+        monitoring_interval_minutes=int(getenv('MONITORING_INTERVAL_MINUTES', '30')),
+        compound_api_url=getenv('COMPOUND_API_URL', 'http://compound_api:8084').rstrip('/'),
     )
