@@ -44,7 +44,6 @@ class JobIn(BaseModel):
     lon: float
     demand: int = Field(ge=0)
     service_time_min: int = Field(ge=0)
-    time_window: tuple[int, int] = (0, 24 * 60)
 
 
 class ObjectiveWeightsIn(BaseModel):
