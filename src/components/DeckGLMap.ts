@@ -2523,8 +2523,25 @@ export class DeckGLMap {
   }
 
   public setLayers(layers: MapLayers): void {
+    // Capture previous state so we can detect on/off transitions for certain layers
+    const wasCompoundRiskEnabled = this.state.layers?.compoundRisk ?? false;
+
     this.state.layers = layers;
     this.updateCompoundUiVisibility();
+
+    // If the compound risk layer has just been turned off, clear any in-flight/loading state
+    if (!layers.compoundRisk && wasCompoundRiskEnabled) {
+      this.compoundLoading = false;
+      // Clear any previously loaded compound data so UI/data state remain consistent
+      // (these fields are used elsewhere in this component when rendering compound risk)
+      // They may be undefined if compound data has never been loaded.
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore - properties are defined on the class elsewhere in this file
+      this.compoundHazards = undefined;
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore - properties are defined on the class elsewhere in this file
+      this.compoundAlerts = undefined;
+    }
     if (layers.compoundRisk && !this.compoundHazards && !this.compoundLoading) {
       void this.loadCompoundRiskData();
     }
