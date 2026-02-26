@@ -500,6 +500,29 @@ See [`.env.example`](./.env.example) for the complete list with registration lin
 
 ---
 
+## Self-host (Docker Compose)
+
+Run the full local stack (PostGIS + Compound API + frontend) without Vercel:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Services:
+- Frontend: http://localhost:3000
+- Compound API health: http://localhost:8090/compound/health
+- PostGIS: localhost:5432
+
+Run backend tests:
+
+```bash
+pip install -r services/compound_api/requirements.txt
+pytest services/compound_api/tests
+```
+
+---
+
 ## Tech Stack
 
 | Category | Technologies |

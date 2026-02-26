@@ -1,0 +1,35 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: worldmonitor
+      POSTGRES_USER: worldmonitor
+      POSTGRES_PASSWORD: worldmonitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+
+  compound_api:
+    build:
+      context: ./services/compound_api
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "8090:8090"
+    depends_on:
+      - postgis
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    environment:
+      VITE_COMPOUND_API_URL: ${VITE_COMPOUND_API_URL:-http://localhost:8090}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - compound_api
+
+volumes:
+  postgis_data:
