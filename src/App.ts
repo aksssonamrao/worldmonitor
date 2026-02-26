@@ -25,6 +25,7 @@ export class App {
   private routes: RouteOption[] = [];
   private selectedRouteId: string | null = null;
   private scoreByRoute = new globalThis.Map<string, RouteScore>();
+  private mode: 'default' | 'fallback' | 'multi-stop' = 'default';
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId);
@@ -44,6 +45,8 @@ export class App {
         <label>Arrive by<input id="arrive" type="datetime-local"></label>
         <label>Risk appetite <input id="risk" type="range" min="0" max="1" step="0.1" value="0.5"></label>
         <button id="generate">Generate Options</button>
+        <label>Mode<select id="mode"><option value="default">Default</option><option value="fallback">Fallback</option><option value="multi-stop">Multi-stop</option></select></label>
+        <label>Stops (lat,lon per line)<textarea id="stops" rows="4" placeholder="36.0,-120.0"></textarea></label>
       </aside>
       <aside class="panel panel-right"><h3>Route Options</h3><div id="route-cards"></div><h4>Issues along route</h4><div id="issues"></div></aside>
       <section class="drawer"><h3>Evidence</h3><div id="evidence"></div></section>
@@ -104,6 +107,10 @@ export class App {
   }
 
   private bindUI(): void {
+    this.container.querySelector('#mode')?.addEventListener('change', (event) => {
+      this.mode = (event.target as HTMLSelectElement).value as any;
+      if (this.selectedRouteId) this.selectRoute(this.selectedRouteId, false);
+    });
     this.container.querySelector('#generate')?.addEventListener('click', () => {
       this.generateRoutes().catch((error: unknown) => {
         this.setStatus(error instanceof Error ? error.message : 'Failed to generate routes');
@@ -266,6 +273,8 @@ export class App {
 
     this.renderGradient(routeId);
     this.renderIssues(routeId);
+    if (this.mode === 'fallback') this.renderFallback(route).catch(console.error);
+    if (this.mode === 'multi-stop') this.renderMultiStop(route).catch(console.error);
   }
 
   private renderGradient(routeId: string): void {
@@ -336,6 +345,60 @@ export class App {
       };
       issues.appendChild(btn);
     });
+  }
+
+  private async renderFallback(route: RouteOption): Promise<void> {
+    const origin = this.parsePoint((this.container.querySelector('#origin') as HTMLInputElement).value);
+    const response = await this.safeFetchJson<any>('http://localhost:8093/routing/isochrone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: { locations: [{ lat: origin.lat, lon: origin.lon }], contours: [{ time: 90 }], costing: 'auto', polygons: true } }),
+    });
+    if (!response?.feature_collection) return;
+    const hubs = [
+      { name: 'Port of Los Angeles' },
+      { name: 'Port of Long Beach' },
+      { name: 'Ontario Hub' },
+    ].map((hub, idx) => ({ ...hub, score: Number((route.summary_risk.total + idx * 4).toFixed(1)) }));
+
+    if (this.map.getSource('fallback-isochrone')) {
+      (this.map.getSource('fallback-isochrone') as maplibregl.GeoJSONSource).setData(response.feature_collection as any);
+    } else {
+      this.map.addSource('fallback-isochrone', { type: 'geojson', data: response.feature_collection as any });
+      this.map.addLayer({ id: 'fallback-isochrone-fill', type: 'fill', source: 'fallback-isochrone', paint: { 'fill-color': '#4cc9f0', 'fill-opacity': 0.12 } });
+      this.map.addLayer({ id: 'fallback-isochrone-line', type: 'line', source: 'fallback-isochrone', paint: { 'line-color': '#4cc9f0', 'line-width': 2 } });
+    }
+    const issues = this.container.querySelector('#issues') as HTMLElement;
+    issues.replaceChildren();
+    hubs.forEach((hub) => {
+      const item = document.createElement('button');
+      item.className = 'issue';
+      item.textContent = `${hub.name} · score ${hub.score}`;
+      issues.appendChild(item);
+    });
+  }
+
+  private async renderMultiStop(route: RouteOption): Promise<void> {
+    const origin = this.parsePoint((this.container.querySelector('#origin') as HTMLInputElement).value);
+    const destination = this.parsePoint((this.container.querySelector('#destination') as HTMLInputElement).value);
+    const stopsRaw = (this.container.querySelector('#stops') as HTMLTextAreaElement).value.trim();
+    if (!stopsRaw) return;
+    const mids = stopsRaw.split('\n').map((line) => this.parsePoint(line));
+    const locations = [{ lat: origin.lat, lon: origin.lon }, ...mids.map((s) => ({ lat: s.lat, lon: s.lon })), { lat: destination.lat, lon: destination.lon }];
+    const response = await this.safeFetchJson<any>('http://localhost:8093/routing/optimized_route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: { locations, costing: 'auto' } }),
+    });
+    const geometry = response?.route?.geometry;
+    if (!geometry) return;
+    const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry, properties: { score: route.summary_risk.total } }] } as FeatureCollection;
+    if (this.map.getSource('multi-stop-route')) {
+      (this.map.getSource('multi-stop-route') as maplibregl.GeoJSONSource).setData(fc as any);
+    } else {
+      this.map.addSource('multi-stop-route', { type: 'geojson', data: fc as any });
+      this.map.addLayer({ id: 'multi-stop-route-line', type: 'line', source: 'multi-stop-route', paint: { 'line-width': 6, 'line-color': ['interpolate', ['linear'], ['get', 'score'], 0, '#2dc937', 100, '#cc3232'] } });
+    }
   }
 
   private async loadEvidenceLayers(): Promise<void> {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from os import getenv
@@ -9,6 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from fastapi import FastAPI, HTTPException, Query
+import httpx
 
 from app.config import Settings, load_settings
 from app.hazards.generator import HazardGenerator
@@ -16,6 +18,7 @@ from app.storage import Storage
 from app.weather.google_weather_client import GoogleWeatherClient
 
 logger = logging.getLogger(__name__)
+ROUTING_API_URL = os.getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
 
 
 @asynccontextmanager
@@ -318,6 +321,38 @@ def _distance_km(origin: PointIn, destination: PointIn) -> float:
     return 2 * r * asin(sqrt(a))
 
 
+
+
+def _label_routes(scored_routes: list[dict[str, Any]], risk_appetite: float) -> list[dict[str, Any]]:
+    if not scored_routes:
+        return []
+    fastest = min(scored_routes, key=lambda item: item['eta_hours'])
+    safest = min(scored_routes, key=lambda item: item['summary_risk']['total'])
+    balanced = min(scored_routes, key=lambda item: ((1.0 - risk_appetite) * item['eta_hours']) + (risk_appetite * item['summary_risk']['total']))
+    tagged = [
+        {**fastest, 'id': 'fastest', 'name': 'Fastest'},
+        {**balanced, 'id': 'balanced', 'name': 'Balanced'},
+        {**safest, 'id': 'safest', 'name': 'Safest'},
+    ]
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for item in tagged + scored_routes:
+        key = str(item.get('source_id', item.get('id')))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) == 3:
+            break
+    labels = [('fastest', 'Fastest'), ('balanced', 'Balanced'), ('safest', 'Safest')]
+    for idx, item in enumerate(deduped):
+        if 'id' not in item:
+            item['id'] = labels[min(idx, 2)][0]
+        if 'name' not in item:
+            item['name'] = labels[min(idx, 2)][1]
+    return deduped
+
+
 @app.post('/routes/options')
 async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
     depart_time = _parse_route_datetime(body.depart_time, 'depart_time')
@@ -325,15 +360,28 @@ async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
     if depart_time >= arrive_by:
         raise HTTPException(status_code=422, detail='depart_time must be before arrive_by')
 
-    base_distance = _distance_km(body.origin, body.destination)
-    options = [
-        {'id': 'fastest', 'name': 'Fastest', 'geometry': _line_option(body.origin, body.destination, 0.0), 'distance_factor': 1.0, 'eta_factor': 1.0},
-        {'id': 'balanced', 'name': 'Balanced', 'geometry': _line_option(body.origin, body.destination, 0.9), 'distance_factor': 1.08, 'eta_factor': 1.12},
-        {'id': 'safest', 'name': 'Safest', 'geometry': _line_option(body.origin, body.destination, -1.1), 'distance_factor': 1.16, 'eta_factor': 1.25},
-    ]
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        route_resp = await client.post(
+            f'{ROUTING_API_URL}/routing/route',
+            json={
+                'payload': {
+                    'locations': [
+                        {'lat': body.origin.lat, 'lon': body.origin.lon},
+                        {'lat': body.destination.lat, 'lon': body.destination.lon},
+                    ],
+                    'costing': 'auto',
+                    'alternates': 2,
+                }
+            },
+        )
+        route_resp.raise_for_status()
+        options = route_resp.json().get('routes', [])
+    if not options:
+        raise HTTPException(status_code=502, detail='routing_api returned no routes')
+
     scored = []
     run_id = await _run_id_param('latest')
-    for item in options:
+    for idx, item in enumerate(options):
         score = await app.state.storage.score_route_corridor(
             item['geometry'],
             app.state.settings.event_lookback_hours,
@@ -342,20 +390,17 @@ async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
             depart_time,
             arrive_by,
         )
-        risk_bias = {'fastest': 1.1, 'balanced': 1.0, 'safest': 0.82}[item['id']]
         summary = dict(score['summary_risk'])
-        summary['total'] = round(min(100.0, summary['total'] * risk_bias * (1.1 - body.risk_appetite * 0.2)), 3)
         scored.append(
             {
-                'id': item['id'],
-                'name': item['name'],
+                'source_id': item.get('id', f'route-{idx + 1}'),
                 'geometry': item['geometry'],
-                'distance_km': round(base_distance * item['distance_factor'], 3),
-                'eta_hours': round((base_distance / 55.0) * item['eta_factor'], 3),
+                'distance_km': round(float(item.get('distance_km', _distance_km(body.origin, body.destination))), 3),
+                'eta_hours': round(float(item.get('duration_s', 0.0)) / 3600.0, 3),
                 'summary_risk': summary,
             }
         )
-    return {'routes': scored}
+    return {'routes': _label_routes(scored, body.risk_appetite)}
 
 
 @app.post('/routes/score')

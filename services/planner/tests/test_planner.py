@@ -124,3 +124,31 @@ def test_agent_brief_template():
     body = resp.json()
     assert 'markdown' in body
     assert body['citations']
+
+
+def test_agent_mitigation(monkeypatch):
+    class FakePlugin:
+        async def route(self, payload):
+            return {'routes': [{'geometry': {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-118.2, 34.0]]}, 'duration_s': 1000}, {'geometry': {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-119.0, 35.0], [-118.2, 34.0]]}, 'duration_s': 1200}]}
+
+        async def isochrone(self, payload):
+            return {'feature_collection': {'type': 'FeatureCollection', 'features': []}}
+
+        async def corridor_score(self, geometry, depart_time, arrive_by):
+            return {'summary_risk': {'total': 17.0}}
+
+    monkeypatch.setattr('app.main.RoutingPlugin', FakePlugin)
+    resp = client.post('/agent/mitigation', json={
+        'shipment': {
+            'origin': {'lat': 37.78, 'lon': -122.42},
+            'destination': {'lat': 34.05, 'lon': -118.24},
+            'depart_time': '2026-01-01T00:00:00Z',
+            'arrive_by': '2026-01-01T08:00:00Z',
+        },
+        'selected_route': {'geometry': {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-118.2, 34.0]]}, 'eta_hours': 8},
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['mitigations']['depart_later']
+    assert body['mitigations']['reroute']['risk_total'] == 17.0
+    assert body['citations']

@@ -250,11 +250,39 @@ def test_dedup_multiple_hazards_and_invalid_event_id(configured_app):
     assert ok.status_code == 200
 
 
-def test_routes_options_and_score(configured_app):
+def test_routes_options_and_score(configured_app, monkeypatch):
     app_obj, storage = configured_app
     now = datetime.now(timezone.utc)
     storage.runs.append({'run_id': 'run-routes', 'started_at': now})
     client = TestClient(app_obj)
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                'routes': [
+                    {'id': 'r1', 'geometry': {'type': 'LineString', 'coordinates': [[-122.42, 37.78], [-118.24, 34.05]]}, 'distance_km': 540.0, 'duration_s': 28000},
+                    {'id': 'r2', 'geometry': {'type': 'LineString', 'coordinates': [[-122.42, 37.78], [-120.0, 36.0], [-118.24, 34.05]]}, 'distance_km': 560.0, 'duration_s': 30000},
+                    {'id': 'r3', 'geometry': {'type': 'LineString', 'coordinates': [[-122.42, 37.78], [-121.0, 35.0], [-118.24, 34.05]]}, 'distance_km': 590.0, 'duration_s': 32000},
+                ]
+            }
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json):
+            assert url.endswith('/routing/route')
+            return FakeResponse()
+
+    monkeypatch.setattr('app.main.httpx.AsyncClient', lambda timeout=20.0: FakeAsyncClient())
 
     options_resp = client.post(
         '/routes/options',

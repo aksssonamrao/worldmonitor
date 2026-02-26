@@ -16,7 +16,9 @@ docker compose up --build
 Services:
 - Frontend: http://localhost:3000
 - Compound API: http://localhost:8090/compound/health
-- Planner API (+ `/agent/brief`): http://localhost:8091/health
+- Planner API (+ `/agent/brief`, `/agent/mitigation`): http://localhost:8091/health
+- Routing API (Valhalla wrapper): http://localhost:8093/health
+- Valhalla: http://localhost:8002
 - PostGIS: localhost:5432
 
 ## Key APIs
@@ -46,3 +48,12 @@ Frontend layer system:
 - hazards polygon layer
 
 Route scoring cache is persisted in `route_score_cache` and cleaned hourly via `route_score_cache_retention_cleanup()` (default retention 30 days), backed by `route_score_cache_created_at_idx`.
+
+
+## Valhalla quickstart
+
+```bash
+./scripts/valhalla/build_tiles.sh
+```
+
+This downloads a small-region extract (India by default) and builds tiles into `./valhalla_data`.
