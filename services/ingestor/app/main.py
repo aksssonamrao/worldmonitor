@@ -10,9 +10,9 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
-from app.config import load_settings
-from app.ingestion import run_ingestion_cycle
-from app.storage import IngestStorage
+from .config import load_settings
+from .ingestion import run_ingestion_cycle
+from .storage import IngestStorage
 
 logger = logging.getLogger(__name__)
 ingestion_lock = asyncio.Lock()

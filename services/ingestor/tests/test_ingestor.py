@@ -76,7 +76,19 @@ def test_dedup_on_source_event_id_and_source_failures(monkeypatch):
 
     monkeypatch.setattr('app.ingestion.httpx.AsyncClient', DummyClient)
 
-    settings = Settings(database_url='postgresql://', ingest_interval_minutes=15, gdelt_enabled=True, reliefweb_enabled=True, rss_enabled=False, rss_config_path='x', focus_countries=['US'], focus_regions=['EUROPE'], gdelt_lookback_hours=72)
+    settings = Settings(
+        database_url='postgresql://',
+        ingest_interval_minutes=15,
+        gdelt_enabled=True,
+        reliefweb_enabled=True,
+        rss_enabled=False,
+        rss_config_path='x',
+        focus_countries=['US'],
+        focus_regions=['EUROPE'],
+        gdelt_lookback_hours=72,
+        monitoring_interval_minutes=30,
+        compound_api_url='http://compound_api:8084',
+    )
     storage = FakeStorage()
 
     async def run_twice():

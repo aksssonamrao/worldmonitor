@@ -6,9 +6,9 @@ from typing import Any
 
 import httpx
 
-from app.config import Settings
-from app.sources import fetch_gdelt, fetch_reliefweb, fetch_rss_events
-from app.storage import IngestStorage
+from .config import Settings
+from .sources import fetch_gdelt, fetch_reliefweb, fetch_rss_events
+from .storage import IngestStorage
 
 logger = logging.getLogger(__name__)
 
