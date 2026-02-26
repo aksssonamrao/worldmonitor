@@ -203,6 +203,7 @@ export class DeckGLMap {
   private compoundLoading = false;
   private compoundError: string | null = null;
   private selectedCompoundAlert: CompoundAlertItem | null = null;
+  private _compoundRiskRequestId = 0;
 
 
   // Country highlight state
@@ -2081,9 +2082,6 @@ export class DeckGLMap {
           this.state.layers[layer] = enabled;
           if (layer === 'compoundRisk') {
             this.updateCompoundUiVisibility();
-            if (enabled) {
-              void this.loadCompoundRiskData();
-            }
           }
           this.render();
           this.onLayerChange?.(layer, enabled);
@@ -2125,6 +2123,8 @@ export class DeckGLMap {
       const stepEl = panel.querySelector('.compound-risk-step');
       if (stepEl) stepEl.textContent = String(next);
       if (this.state.layers.compoundRisk) {
+        // Increment requestId so any in-flight request is treated as stale
+        this._compoundRiskRequestId++;
         void this.loadCompoundRiskData();
       }
     });
@@ -2199,6 +2199,9 @@ export class DeckGLMap {
         this.selectedCompoundAlert = alert;
         this.setCompoundDetail(alert);
         this.setCenter(alert.lat, alert.lon, Math.max(this.maplibreMap?.getZoom() || 4, 4));
+        // Update selected visual state
+        drawer.querySelectorAll('.compound-alert-item').forEach(el => el.classList.remove('selected'));
+        item.classList.add('selected');
       });
       anyDrawer._compoundClickHandlerAttached = true;
     }
@@ -2206,14 +2209,15 @@ export class DeckGLMap {
     drawer.innerHTML = this.compoundAlerts
       .map(
         (alert) =>
-          `<button class="compound-alert-item" data-alert-id="${escapeHtml(alert.id)}">${escapeHtml(
+          `<button class="compound-alert-item${this.selectedCompoundAlert?.id === alert.id ? ' selected' : ''}" data-alert-id="${escapeHtml(alert.id)}">${escapeHtml(
             String(alert.properties.title || alert.properties.name || 'Alert'),
           )}<span>${alert.score.toFixed(2)}</span></button>`,
       )
       .join('');
   }
 
-  private async loadCompoundRiskData(): Promise<void> {
+  public async loadCompoundRiskData(): Promise<void> {
+    const reqId = ++this._compoundRiskRequestId;
     this.compoundLoading = true;
     this.compoundError = null;
     this.setCompoundStatus('Loading compound risk…', 'loading');
@@ -2223,6 +2227,10 @@ export class DeckGLMap {
         fetchCompoundHazards(this.compoundTimestep),
         fetchCompoundAlerts(this.compoundTimestep),
       ]);
+
+      // Discard stale responses from previous slider positions
+      if (reqId !== this._compoundRiskRequestId) return;
+
       this.compoundHazards = hazards;
 
       const mapped = alerts.features
@@ -2232,7 +2240,7 @@ export class DeckGLMap {
           if (!Array.isArray(coords) || coords.length < 2) return null;
           const lon = Number(coords[0]);
           const lat = Number(coords[1]);
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+          if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
           const props = feature.properties || {};
           const score = Number(props.score ?? 0);
           return {
@@ -2251,8 +2259,10 @@ export class DeckGLMap {
       this.setCompoundDetail(this.selectedCompoundAlert);
       this.renderCompoundDrawer();
       this.setCompoundStatus(mapped.length ? `Loaded ${mapped.length} alerts.` : 'No alerts returned.');
+      this.setLayerReady('compoundRisk', mapped.length > 0);
       this.render();
     } catch (error) {
+      if (reqId !== this._compoundRiskRequestId) return;
       this.compoundError = error instanceof Error ? error.message : 'Failed to load compound risk data';
       this.compoundHazards = null;
       this.compoundAlerts = [];
@@ -2261,7 +2271,9 @@ export class DeckGLMap {
       this.setCompoundStatus(this.compoundError, 'error');
       this.render();
     } finally {
-      this.compoundLoading = false;
+      if (reqId === this._compoundRiskRequestId) {
+        this.compoundLoading = false;
+      }
     }
   }
 
@@ -2853,6 +2865,9 @@ export class DeckGLMap {
       this.state.layers[layer] = true;
       const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"] input`) as HTMLInputElement;
       if (toggle) toggle.checked = true;
+      if (layer === 'compoundRisk') {
+        this.updateCompoundUiVisibility();
+      }
       this.render();
       this.onLayerChange?.(layer, true);
     }
@@ -2864,6 +2879,9 @@ export class DeckGLMap {
     this.state.layers[layer] = !this.state.layers[layer];
     const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"] input`) as HTMLInputElement;
     if (toggle) toggle.checked = this.state.layers[layer];
+    if (layer === 'compoundRisk') {
+      this.updateCompoundUiVisibility();
+    }
     this.render();
     this.onLayerChange?.(layer, this.state.layers[layer]);
   }

@@ -349,6 +349,7 @@ export class MapComponent {
       ais: 'Shipping',
       flights: 'Delays',
       military: 'Military',
+      compoundRisk: 'Compound Risk',
     };
 
     layers.forEach((layer) => {
@@ -2666,7 +2667,7 @@ export class MapComponent {
   }
 
   private static readonly ASYNC_DATA_LAYERS: Set<keyof MapLayers> = new Set([
-    'natural', 'weather', 'outages', 'ais', 'protests', 'flights', 'military', 'techEvents',
+    'natural', 'weather', 'outages', 'ais', 'protests', 'flights', 'military', 'techEvents', 'compoundRisk',
   ]);
 
   public toggleLayer(layer: keyof MapLayers): void {
