@@ -1,15 +1,11 @@
-from pathlib import Path
-import sys
-from ..app.main import compound_health
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
 def test_health_endpoint_returns_ok_true() -> None:
-    app = FastAPI()
-
-    @app.get("/health")
-    def health() -> dict:
-        return compound_health()
-
     client = TestClient(app)
-    response = client.get("/health")
+    response = client.get('/compound/health')
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    assert response.json() == {'ok': True}
