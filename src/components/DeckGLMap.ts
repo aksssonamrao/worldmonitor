@@ -2110,8 +2110,8 @@ export class DeckGLMap {
     panel.className = 'compound-risk-panel';
     panel.innerHTML = `
       <div class="compound-risk-header">Compound Risk</div>
-      <label class="compound-risk-slider-label">Timestep: <span class="compound-risk-step">0</span></label>
-      <input class="compound-risk-slider" type="range" min="0" max="2" step="1" value="0" />
+      <label class="compound-risk-slider-label" for="compound-risk-timestep">Timestep: <span class="compound-risk-step">0</span></label>
+      <input id="compound-risk-timestep" class="compound-risk-slider" type="range" min="0" max="2" step="1" value="0" />
       <div class="compound-risk-status"></div>
       <div class="compound-alerts-drawer"></div>
       <div class="compound-alert-detail">Select an alert for details.</div>
