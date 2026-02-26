@@ -2170,7 +2170,16 @@ export class DeckGLMap {
           : [-122.6, 37.6, -122.3, 37.9];
         await refreshCompoundHazards(bbox);
         const providerEl = panel.querySelector('.compound-risk-provider') as HTMLElement | null;
-        if (providerEl) providerEl.textContent = `Hazards updated: ${new Date().toISOString()}, provider: Google Weather`;
+        if (providerEl) {
+          const lastUpdated = new Date().toLocaleString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          });
+          providerEl.textContent = `Hazards updated: ${lastUpdated}, provider: Google Weather`;
+        }
         await this.loadCompoundRiskData();
       } catch (error) {
         this.setCompoundStatus(error instanceof Error ? error.message : 'Refresh failed', 'error');
