@@ -171,3 +171,148 @@ class Storage:
         if row is None:
             return None
         return dict(row)
+
+    async def list_events(self, since_hours: int, event_types: list[str] | None = None, bbox: list[float] | None = None) -> list[dict[str, Any]]:
+        filters = ["occurred_at >= NOW() - make_interval(hours => $1)"]
+        params: list[Any] = [since_hours]
+        if event_types:
+            params.append(event_types)
+            filters.append(f"event_type = ANY(${len(params)})")
+        if bbox:
+            params.extend(bbox)
+            start = len(params) - 3
+            filters.append(
+                f"ST_Intersects(geom, ST_MakeEnvelope(${start}, ${start+1}, ${start+2}, ${start+3}, 4326)::geography)"
+            )
+        where = ' AND '.join(filters)
+        query = f"""
+            SELECT id, source, source_event_id, title, description, url, event_type, severity, confidence,
+                   country, region, occurred_at, ingested_at, raw,
+                   ST_AsGeoJSON(geom::geometry)::json AS geometry
+            FROM events
+            WHERE {where}
+            ORDER BY occurred_at DESC
+            LIMIT 500
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        out = []
+        for row in rows:
+            item = dict(row)
+            item['geometry'] = json.loads(item['geometry']) if isinstance(item['geometry'], str) else item['geometry']
+            out.append(item)
+        return out
+
+    async def get_event(self, event_id: str) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, source, source_event_id, title, description, url, event_type, severity, confidence,
+                       country, region, occurred_at, ingested_at, raw,
+                       ST_AsGeoJSON(geom::geometry)::json AS geometry
+                FROM events
+                WHERE id = $1
+                """,
+                event_id,
+            )
+        if row is None:
+            return None
+        item = dict(row)
+        item['geometry'] = json.loads(item['geometry']) if isinstance(item['geometry'], str) else item['geometry']
+        return item
+
+    async def list_ingestion_state(self) -> dict[str, Any]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT source, cursor, updated_at FROM ingestion_state")
+        return {row['source']: {'cursor': row['cursor'], 'updated_at': row['updated_at'].isoformat()} for row in rows}
+
+    async def detect_compound_alerts(
+        self,
+        run_id: str,
+        timestep: int,
+        lookback_hours: int,
+        score_threshold: float,
+        event_weights: dict[str, float],
+        bbox: list[float] | None = None,
+    ) -> list[dict[str, Any]]:
+        bbox_filter = ''
+        params: list[Any] = [run_id, timestep, lookback_hours]
+        if bbox:
+            params.extend(bbox)
+            idx = len(params) - 3
+            bbox_filter = f" AND ST_Intersects(e.geom, ST_MakeEnvelope(${idx}, ${idx+1}, ${idx+2}, ${idx+3}, 4326)::geography)"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT e.id as event_id, e.title, e.url, e.event_type, e.severity, e.confidence,
+                       e.country, e.occurred_at,
+                       h.type as hazard_type, h.hazard_prob, h.forecast_ts,
+                       ST_AsGeoJSON(e.geom::geometry)::json AS geometry
+                FROM events e
+                JOIN hazards h ON h.run_id = $1 AND h.timestep = $2
+                WHERE e.occurred_at >= NOW() - make_interval(hours => $3)
+                  AND ST_Intersects(h.geom, e.geom)
+                  {bbox_filter}
+                """,
+                *params,
+            )
+
+            best_by_event: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                event_type = row['event_type']
+                base = row['severity'] * row['confidence'] * row['hazard_prob']
+                score = max(0.0, min(100.0, base * event_weights.get(event_type, 1.0) * 100.0))
+                payload = {
+                    'event_id': str(row['event_id']),
+                    'title': row['title'],
+                    'url': row['url'],
+                    'event_type': event_type,
+                    'hazard_type': row['hazard_type'],
+                    'hazard_prob': row['hazard_prob'],
+                    'forecast_ts': row['forecast_ts'],
+                    'score': score,
+                    'country': row['country'],
+                    'occurred_at': row['occurred_at'],
+                    'geometry': row['geometry'],
+                    'details': {
+                        'base': base,
+                        'event_weight': event_weights.get(event_type, 1.0),
+                        'severity': row['severity'],
+                        'confidence': row['confidence'],
+                        'hazard_prob': row['hazard_prob'],
+                        'other_hazards': [],
+                    },
+                }
+                current = best_by_event.get(payload['event_id'])
+                if current is None or payload['score'] > current['score']:
+                    if current is not None:
+                        payload['details']['other_hazards'] = current['details']['other_hazards'] + [
+                            {'hazard_type': current['hazard_type'], 'hazard_prob': current['hazard_prob'], 'score': current['score']}
+                        ]
+                    best_by_event[payload['event_id']] = payload
+                else:
+                    current['details']['other_hazards'].append({'hazard_type': payload['hazard_type'], 'hazard_prob': payload['hazard_prob'], 'score': payload['score']})
+
+            results = [item for item in best_by_event.values() if item['score'] >= score_threshold]
+            await conn.execute('DELETE FROM compound_alerts WHERE run_id = $1 AND timestep = $2', run_id, timestep)
+            for alert in results:
+                await conn.execute(
+                    """
+                    INSERT INTO compound_alerts (run_id, timestep, score, event_id, hazard_type, hazard_prob, forecast_ts, geom, details)
+                    VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, ST_GeogFromText($8), $9::jsonb)
+                    ON CONFLICT (run_id, timestep, event_id)
+                    DO UPDATE SET score = EXCLUDED.score, hazard_type = EXCLUDED.hazard_type,
+                                  hazard_prob = EXCLUDED.hazard_prob, forecast_ts = EXCLUDED.forecast_ts,
+                                  geom = EXCLUDED.geom, details = EXCLUDED.details, created_at = NOW()
+                    """,
+                    run_id,
+                    timestep,
+                    alert['score'],
+                    alert['event_id'],
+                    alert['hazard_type'],
+                    alert['hazard_prob'],
+                    alert['forecast_ts'],
+                    f"SRID=4326;POINT({alert['geometry']['coordinates'][0]} {alert['geometry']['coordinates'][1]})",
+                    json.dumps(alert['details']),
+                )
+        return sorted(results, key=lambda x: x['score'], reverse=True)

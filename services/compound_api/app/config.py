@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from os import getenv
+import json
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,9 @@ class Settings:
     default_bbox: tuple[float, float, float, float]
     max_bbox_area_deg2: float
     max_qps: float
+    event_lookback_hours: int
+    alert_score_threshold: float
+    event_type_weights: dict[str, float]
 
 
 def _csv_ints(value: str, *, default: str) -> list[int]:
@@ -93,4 +97,7 @@ def load_settings() -> Settings:
         default_bbox=_bbox(getenv('DEFAULT_BBOX', ''), default='72.0,8.0,88.0,23.0'),
         max_bbox_area_deg2=_parse_float('MAX_BBOX_AREA_DEG2', getenv('MAX_BBOX_AREA_DEG2'), 50.0),
         max_qps=_parse_float('MAX_QPS', getenv('MAX_QPS'), 5.0),
+        event_lookback_hours=_parse_int('EVENT_LOOKBACK_HOURS', getenv('EVENT_LOOKBACK_HOURS'), 72),
+        alert_score_threshold=_parse_float('ALERT_SCORE_THRESHOLD', getenv('ALERT_SCORE_THRESHOLD'), 20.0),
+        event_type_weights=json.loads(getenv('EVENT_TYPE_WEIGHTS_JSON', "{\"PROTEST\":1.2,\"STRIKE\":1.2,\"CONFLICT\":1.5,\"DISASTER\":1.4,\"OUTAGE\":1.3,\"ACCIDENT\":1.1,\"OTHER\":1.0}")),
     )

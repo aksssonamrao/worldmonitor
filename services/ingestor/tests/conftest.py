@@ -1,8 +1,5 @@
-import os
 import sys
 import types
-
-os.environ.setdefault('GOOGLE_WEATHER_API_KEY', 'test-key')
 
 if 'asyncpg' not in sys.modules:
     fake = types.ModuleType('asyncpg')
