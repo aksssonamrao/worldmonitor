@@ -17,7 +17,9 @@ const COMPOUND_API_URL = import.meta.env.VITE_COMPOUND_API_URL as string | undef
 
 async function fetchGeoJson(path: string, timestep: number): Promise<FeatureCollection<Geometry, CompoundAlertProperties>> {
   if (!COMPOUND_API_URL) {
-    throw new Error('VITE_COMPOUND_API_URL is not configured');
+    throw new Error(
+      'VITE_COMPOUND_API_URL is not configured. Please set the VITE_COMPOUND_API_URL environment variable (e.g., in your .env file or deployment configuration) before building or running this application.'
+    );
   }
 
   const ts = Math.max(0, Math.min(2, Math.floor(timestep)));
