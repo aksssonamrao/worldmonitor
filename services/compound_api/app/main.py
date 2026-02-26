@@ -64,7 +64,37 @@ async def generate_hazards(body: dict[str, Any]) -> dict[str, Any]:
 
     settings: Settings = app.state.settings
     run_id = body.get('run_id') or datetime.now(timezone.utc).strftime('run-%Y%m%d%H%M%S')
-    bbox = body.get('bbox') or list(settings.default_bbox)
+    raw_bbox = body.get('bbox')
+    if raw_bbox is None:
+        bbox = list(settings.default_bbox)
+    else:
+        # Validate that bbox is a list/tuple of 4 numeric values within valid coordinate ranges:
+        # [min_lon, min_lat, max_lon, max_lat]
+        if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != 4:
+            raise HTTPException(
+                status_code=400,
+                detail='bbox must be a list of 4 coordinates [min_lon, min_lat, max_lon, max_lat]',
+            )
+        try:
+            bbox = [float(v) for v in raw_bbox]
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail='bbox values must be numeric',
+            )
+        min_lon, min_lat, max_lon, max_lat = bbox
+        # Longitude must be between -180 and 180; latitude between -90 and 90
+        if not (-180.0 <= min_lon <= 180.0 and -180.0 <= max_lon <= 180.0 and -90.0 <= min_lat <= 90.0 and -90.0 <= max_lat <= 90.0):
+            raise HTTPException(
+                status_code=400,
+                detail='bbox coordinates out of valid range: lon in [-180, 180], lat in [-90, 90]',
+            )
+        # Ensure bbox defines a non-empty rectangle
+        if not (min_lon < max_lon and min_lat < max_lat):
+            raise HTTPException(
+                status_code=400,
+                detail='bbox must have min_lon < max_lon and min_lat < max_lat',
+            )
     timestep_hours = body.get('timestep_hours') or [0, 6, 12, 24]
     hazard_types = body.get('hazard_types') or ['WIND', 'RAIN', 'HEAT']
 
