@@ -35,9 +35,22 @@ def _bbox(value: str, *, default: str) -> tuple[float, float, float, float]:
     parts = [float(part.strip()) for part in raw.split(',') if part.strip()]
     if len(parts) != 4:
         raise RuntimeError('DEFAULT_BBOX must have four comma-separated float values: minLon,minLat,maxLon,maxLat')
-    return parts[0], parts[1], parts[2], parts[3]
 
+    min_lon, min_lat, max_lon, max_lat = parts
 
+    # Validate longitude and latitude ranges
+    if not (-180.0 <= min_lon <= 180.0 and -180.0 <= max_lon <= 180.0):
+        raise RuntimeError('DEFAULT_BBOX longitude values must be between -180 and 180 degrees.')
+    if not (-90.0 <= min_lat <= 90.0 and -90.0 <= max_lat <= 90.0):
+        raise RuntimeError('DEFAULT_BBOX latitude values must be between -90 and 90 degrees.')
+
+    # Validate that minimums are less than maximums
+    if min_lon >= max_lon:
+        raise RuntimeError('DEFAULT_BBOX must have minLon < maxLon.')
+    if min_lat >= max_lat:
+        raise RuntimeError('DEFAULT_BBOX must have minLat < maxLat.')
+
+    return min_lon, min_lat, max_lon, max_lat
 def load_settings() -> Settings:
     database_url = getenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@postgis:5432/worldmonitor')
     google_weather_api_key = getenv('GOOGLE_WEATHER_API_KEY', '').strip()
