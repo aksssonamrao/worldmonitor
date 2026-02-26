@@ -1751,7 +1751,7 @@ export class DeckGLMap {
     }
 
     if (layerId === 'compound-alerts-layer') {
-      return { html: `<div class="deckgl-tooltip"><strong>${obj.properties?.title || obj.properties?.name || 'Compound Alert'}</strong><br/>Score: ${(obj.score ?? 0).toFixed(2)}</div>` };
+      return { html: `<div class="deckgl-tooltip"><strong>${escapeHtml(obj.properties?.title || obj.properties?.name || 'Compound Alert')}</strong><br/>Score: ${(obj.score ?? 0).toFixed(2)}</div>` };
     }
 
     if (layerId === 'ais-density-layer') {
