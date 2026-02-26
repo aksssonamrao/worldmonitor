@@ -2229,12 +2229,16 @@ export class DeckGLMap {
         .map((feature, idx) => {
           if (feature.geometry?.type !== 'Point') return null;
           const coords = (feature.geometry as Point).coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) return null;
+          const lon = Number(coords[0]);
+          const lat = Number(coords[1]);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
           const props = feature.properties || {};
           const score = Number(props.score ?? 0);
           return {
             id: String(props.id || `compound-${idx}`),
-            lon: Number(coords[0]),
-            lat: Number(coords[1]),
+            lon,
+            lat,
             score: Number.isFinite(score) ? score : 0,
             properties: props,
           } as CompoundAlertItem;
