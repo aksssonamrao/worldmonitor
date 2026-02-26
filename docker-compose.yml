@@ -20,7 +20,6 @@ services:
     build:
       context: ./services/compound_api
     environment:
-      # Note: DATABASE_URL is provided for future database integration in compound_api.
       DATABASE_URL: ${DATABASE_URL}
     ports:
       - "8090:8090"
@@ -34,16 +33,38 @@ services:
       retries: 5
       start_period: 15s
 
+  planner:
+    build:
+      context: ./services/planner
+    environment:
+      VITE_COMPOUND_API_URL: ${VITE_COMPOUND_API_URL:-http://compound_api:8090}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    ports:
+      - "8091:8091"
+    depends_on:
+      compound_api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8091/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
       args:
         VITE_COMPOUND_API_URL: ${VITE_COMPOUND_API_URL:-http://localhost:8090}
+        VITE_PLANNER_API_URL: ${VITE_PLANNER_API_URL:-http://localhost:8091}
     ports:
       - "3000:3000"
     depends_on:
       compound_api:
+        condition: service_healthy
+      planner:
         condition: service_healthy
 
 volumes:

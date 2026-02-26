@@ -56,6 +56,7 @@ def _seed_hazards(now: datetime) -> list[Hazard]:
     return [
         Hazard(1, 'landslide', 0.7, now + timedelta(hours=6), 0, 'run-001', _rect(-122.8, 37.4, -121.9, 38.2)),
         Hazard(2, 'smoke', 0.8, now + timedelta(hours=8), 0, 'run-001', _rect(-122.2, 37.0, -121.4, 37.8)),
+        Hazard(7, 'flooded_corridor', 0.95, now + timedelta(hours=5), 0, 'latest', _rect(-122.515, 37.7, -122.455, 37.81)),
         Hazard(3, 'inundation', 0.75, now + timedelta(hours=24), 1, 'run-001', _rect(-90.7, 29.4, -89.4, 30.5)),
         Hazard(4, 'storm_surge', 0.6, now + timedelta(hours=30), 1, 'run-001', _rect(-80.8, 25.3, -79.6, 26.4)),
         Hazard(5, 'power_grid_stress', 0.55, now + timedelta(hours=54), 2, 'run-001', _rect(1.8, 48.2, 3.0, 49.2)),
