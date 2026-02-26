@@ -30,6 +30,14 @@ class GoogleWeatherClient:
         self.bucket = TokenBucket(max_qps)
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0))
 
+    async def aclose(self) -> None:
+        await self.client.aclose()
+
+    async def __aenter__(self) -> GoogleWeatherClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
     async def fetch_hourly(self, lat: float, lon: float, hours: int) -> list[dict]:
         params = {
             'key': self.api_key,
