@@ -70,6 +70,7 @@ const FULL_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: false,
   techEvents: false,
+  compoundRisk: false,
 };
 
 const FULL_MOBILE_MAP_LAYERS: MapLayers = {
@@ -100,6 +101,7 @@ const FULL_MOBILE_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: false,
   techEvents: false,
+  compoundRisk: false,
 };
 
 // ============================================
@@ -169,6 +171,7 @@ const TECH_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: true,
   techEvents: true,
+  compoundRisk: false,
 };
 
 const TECH_MOBILE_MAP_LAYERS: MapLayers = {
@@ -199,6 +202,7 @@ const TECH_MOBILE_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: false,
   techEvents: true,
+  compoundRisk: false,
 };
 
 // ============================================

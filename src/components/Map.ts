@@ -334,6 +334,7 @@ export class MapComponent {
       'cables', 'pipelines', 'outages', 'datacenters',   // infrastructure
       'ais', 'flights',                                   // transport
       'natural', 'weather',                               // natural
+      'compoundRisk',                                      // compound risk
       'economic',                                         // economic
       'waterways',                                        // labels
     ];
@@ -2665,7 +2666,7 @@ export class MapComponent {
   }
 
   private static readonly ASYNC_DATA_LAYERS: Set<keyof MapLayers> = new Set([
-    'natural', 'weather', 'outages', 'ais', 'protests', 'flights', 'military', 'techEvents',
+    'natural', 'weather', 'outages', 'ais', 'protests', 'flights', 'military', 'techEvents', 'compoundRisk',
   ]);
 
   public toggleLayer(layer: keyof MapLayers): void {

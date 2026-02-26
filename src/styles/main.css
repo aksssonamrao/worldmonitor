@@ -11428,3 +11428,41 @@ body.has-critical-banner .panels-grid {
 .change-positive { color: #4caf50; }
 .change-negative { color: #f44336; }
 .change-neutral { color: rgba(255,255,255,0.5); }
+
+.compound-risk-panel {
+  position: absolute;
+  right: 16px;
+  top: 170px;
+  z-index: 31;
+  width: 280px;
+  background: rgba(10, 18, 24, 0.92);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 10px;
+  color: #d8e9f1;
+}
+.compound-risk-header { font-weight: 600; margin-bottom: 6px; }
+.compound-risk-slider { width: 100%; margin: 4px 0 8px; }
+.compound-risk-status { font-size: 12px; color: rgba(216,233,241,0.8); margin-bottom: 8px; min-height: 16px; }
+.compound-risk-status.is-loading { color: #8fd3ff; }
+.compound-risk-status.is-error { color: #ff8e8e; }
+.compound-alerts-drawer { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.compound-alert-item {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #e4eef4;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.compound-alert-detail {
+  font-size: 12px;
+  line-height: 1.35;
+  max-height: 180px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255,255,255,0.12);
+  padding-top: 8px;
+}
