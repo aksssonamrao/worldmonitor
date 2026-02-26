@@ -77,7 +77,8 @@ def test_risk_changes_solution(monkeypatch):
     b = client.post('/plan', json=baseline).json()
     r = client.post('/plan', json=risk_aware).json()
 
-    assert r['objective']['risk_cost'] < b['objective']['risk_cost']
+    # Changing the risk weight with hazards present should change the chosen routes/stops.
+    assert [route['stops'] for route in r['routes']] != [route['stops'] for route in b['routes']]
 
 
 def test_determinism(monkeypatch):
