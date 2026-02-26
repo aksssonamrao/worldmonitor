@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from os import getenv
@@ -18,7 +17,7 @@ from app.storage import Storage
 from app.weather.google_weather_client import GoogleWeatherClient
 
 logger = logging.getLogger(__name__)
-ROUTING_API_URL = os.getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
+ROUTING_API_URL = getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
 
 
 @asynccontextmanager
@@ -360,22 +359,29 @@ async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
     if depart_time >= arrive_by:
         raise HTTPException(status_code=422, detail='depart_time must be before arrive_by')
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        route_resp = await client.post(
-            f'{ROUTING_API_URL}/routing/route',
-            json={
-                'payload': {
-                    'locations': [
-                        {'lat': body.origin.lat, 'lon': body.origin.lon},
-                        {'lat': body.destination.lat, 'lon': body.destination.lon},
-                    ],
-                    'costing': 'auto',
-                    'alternates': 2,
-                }
-            },
-        )
-        route_resp.raise_for_status()
-        options = route_resp.json().get('routes', [])
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            route_resp = await client.post(
+                f'{ROUTING_API_URL}/routing/route',
+                json={
+                    'payload': {
+                        'locations': [
+                            {'lat': body.origin.lat, 'lon': body.origin.lon},
+                            {'lat': body.destination.lat, 'lon': body.destination.lon},
+                        ],
+                        'costing': 'auto',
+                        'alternates': 2,
+                    }
+                },
+            )
+            route_resp.raise_for_status()
+            options = route_resp.json().get('routes', [])
+    except httpx.HTTPStatusError as exc:
+        logger.exception('routing_api returned status=%s body=%s', exc.response.status_code, exc.response.text)
+        raise HTTPException(status_code=502, detail='routing_api returned error') from exc
+    except httpx.RequestError as exc:
+        logger.exception('routing_api unavailable: %s', exc)
+        raise HTTPException(status_code=503, detail='routing_api unavailable') from exc
     if not options:
         raise HTTPException(status_code=502, detail='routing_api returned no routes')
 
@@ -391,12 +397,16 @@ async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
             arrive_by,
         )
         summary = dict(score['summary_risk'])
+        duration_s = item.get('duration_s')
+        if duration_s is None:
+            logger.warning('Route %s missing duration_s from routing response; using sentinel ETA', item.get('id', idx))
+            duration_s = float('inf')
         scored.append(
             {
                 'source_id': item.get('id', f'route-{idx + 1}'),
                 'geometry': item['geometry'],
                 'distance_km': round(float(item.get('distance_km', _distance_km(body.origin, body.destination))), 3),
-                'eta_hours': round(float(item.get('duration_s', 0.0)) / 3600.0, 3),
+                'eta_hours': round(float(duration_s) / 3600.0, 3),
                 'summary_risk': summary,
             }
         )

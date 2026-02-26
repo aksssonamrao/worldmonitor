@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 app = FastAPI(title='Routing API')
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
@@ -19,7 +19,6 @@ class RoutingRequest(BaseModel):
 
 
 def _decode_shape(shape: str) -> list[list[float]]:
-    # Polyline6 decoder
     coords: list[list[float]] = []
     index = lat = lon = 0
     factor = 1_000_000.0
@@ -51,9 +50,19 @@ def _decode_shape(shape: str) -> list[list[float]]:
 
 def _route_to_internal(trip: dict[str, Any], route_id: str) -> dict[str, Any]:
     summary = trip.get('summary', {})
-    leg = (trip.get('legs') or [{}])[0]
-    shape = leg.get('shape')
-    coordinates = _decode_shape(shape) if shape else []
+    legs = trip.get('legs') or []
+    coordinates: list[list[float]] = []
+    for leg in legs:
+        shape = leg.get('shape')
+        if not shape:
+            continue
+        segment = _decode_shape(shape)
+        if not segment:
+            continue
+        if coordinates and coordinates[-1] == segment[0]:
+            coordinates.extend(segment[1:])
+        else:
+            coordinates.extend(segment)
     return {
         'id': route_id,
         'geometry': {'type': 'LineString', 'coordinates': coordinates},
@@ -78,7 +87,10 @@ async def health() -> dict[str, bool]:
 @app.post('/routing/route')
 async def route(body: RoutingRequest) -> dict[str, Any]:
     data = await _post('/route', body.payload)
-    trips = data.get('trip') and [data['trip']] or data.get('trips', [])
+    if 'trip' in data:
+        trips = [data['trip']]
+    else:
+        trips = data.get('trips', []) or []
     routes = [_route_to_internal(trip, f'route-{idx + 1}') for idx, trip in enumerate(trips)]
     return {'routes': routes}
 

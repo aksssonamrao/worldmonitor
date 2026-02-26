@@ -17,7 +17,8 @@ services:
       start_period: 30s
 
   valhalla:
-    image: ghcr.io/valhalla/valhalla:latest
+    image: ghcr.io/valhalla/valhalla:3.6.3
+    restart: unless-stopped
     volumes:
       - ./valhalla_data:/data
     command: ["bash", "-lc", "valhalla_service /data/valhalla.json 1"]
@@ -119,7 +120,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       ROUTING_API_URL: ${ROUTING_API_URL:-http://routing_api:8093}
-      COMPOUND_API_URL: ${VITE_COMPOUND_API_URL:-http://compound_api:8090}
+      COMPOUND_API_URL: ${COMPOUND_API_URL_BACKEND:-http://compound_api:8090}
     ports:
       - "8091:8091"
     depends_on:
@@ -147,8 +148,6 @@ services:
       compound_api:
         condition: service_healthy
       planner:
-        condition: service_healthy
-      routing_api:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]

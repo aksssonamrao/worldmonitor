@@ -29,3 +29,24 @@ def test_route_normalization(monkeypatch):
     assert route['duration_s'] == 777
     assert route['geometry']['type'] == 'LineString'
     assert len(route['geometry']['coordinates']) == 3
+
+
+def test_route_multi_leg_normalization(monkeypatch):
+    async def fake_post(path, payload):
+        return {
+            'trip': {
+                'summary': {'length': 20.0, 'time': 1800},
+                'legs': [
+                    {'shape': '_p~iF~ps|U_ulLnnqC'},
+                    {'shape': '_ulLnnqC_mqNvxq`@'},
+                ],
+            }
+        }
+
+    monkeypatch.setattr('app.main._post', fake_post)
+    resp = client.post('/routing/route', json={'payload': {'locations': []}})
+    assert resp.status_code == 200
+    route = resp.json()['routes'][0]
+    assert route['distance_km'] == 20.0
+    assert route['duration_s'] == 1800
+    assert len(route['geometry']['coordinates']) >= 3

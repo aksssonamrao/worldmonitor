@@ -128,6 +128,9 @@ def test_agent_brief_template():
 
 def test_agent_mitigation(monkeypatch):
     class FakePlugin:
+        def __init__(self, client):
+            self.client = client
+
         async def route(self, payload):
             return {'routes': [{'geometry': {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-118.2, 34.0]]}, 'duration_s': 1000}, {'geometry': {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-119.0, 35.0], [-118.2, 34.0]]}, 'duration_s': 1200}]}
 
