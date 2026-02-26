@@ -1,13 +1,12 @@
 /**
  * Summarization Service with Fallback Chain
  * Server-side Redis caching handles cross-user deduplication
- * Fallback: Groq -> OpenRouter -> Browser T5
+ * Fallback: Groq -> OpenRouter
  */
 
-import { mlWorker } from './ml-worker';
 import { SITE_VARIANT } from '@/config';
 
-export type SummarizationProvider = 'groq' | 'openrouter' | 'browser' | 'cache';
+export type SummarizationProvider = 'groq' | 'openrouter' | 'cache';
 
 export interface SummarizationResult {
   summary: string;
@@ -73,37 +72,8 @@ async function tryOpenRouter(headlines: string[], geoContext?: string): Promise<
   }
 }
 
-async function tryBrowserT5(headlines: string[]): Promise<SummarizationResult | null> {
-  try {
-    if (!mlWorker.isAvailable) {
-      console.log('[Summarization] Browser ML not available');
-      return null;
-    }
-
-    const combinedText = headlines.slice(0, 6).map(h => h.slice(0, 80)).join('. ');
-    const prompt = `Summarize the main themes from these news headlines in 2 sentences: ${combinedText}`;
-
-    const [summary] = await mlWorker.summarize([prompt]);
-
-    if (!summary || summary.length < 20 || summary.toLowerCase().includes('summarize')) {
-      return null;
-    }
-
-    console.log('[Summarization] Browser T5 success');
-    return {
-      summary,
-      provider: 'browser',
-      cached: false,
-    };
-  } catch (error) {
-    console.warn('[Summarization] Browser T5 failed:', error);
-    return null;
-  }
-}
-
 /**
- * Generate a summary using the fallback chain: Groq -> OpenRouter -> Browser T5
- * Server-side Redis caching is handled by the API endpoints
+ * Generate a summary using the fallback chain: Groq -> OpenRouter
  * @param geoContext Optional geographic signal context to include in the prompt
  */
 export async function generateSummary(
@@ -115,7 +85,7 @@ export async function generateSummary(
     return null;
   }
 
-  const totalSteps = 3;
+  const totalSteps = 2;
 
   // Step 1: Try Groq (fast, 14.4K/day with 8b-instant + Redis cache)
   onProgress?.(1, totalSteps, 'Connecting to Groq AI...');
@@ -131,12 +101,6 @@ export async function generateSummary(
     return openRouterResult;
   }
 
-  // Step 3: Try Browser T5 (local, unlimited but slower)
-  onProgress?.(3, totalSteps, 'Loading local AI model...');
-  const browserResult = await tryBrowserT5(headlines);
-  if (browserResult) {
-    return browserResult;
-  }
 
   console.warn('[Summarization] All providers failed');
   return null;

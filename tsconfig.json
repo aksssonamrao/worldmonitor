@@ -23,6 +23,5 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src"],
-  "exclude": ["src/workers/ml.worker.ts"]
+  "include": ["src/main.ts", "src/App.ts", "src/vite-env.d.ts"]
 }

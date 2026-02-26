@@ -1,11 +1,5 @@
-// Configuration exports
-// For variant-specific builds, set VITE_VARIANT environment variable
-// VITE_VARIANT=tech → startups.worldmonitor.app (tech-focused)
-// VITE_VARIANT=full → worldmonitor.app (geopolitical)
+export const SITE_VARIANT = (import.meta.env.VITE_VARIANT || 'full') as string;
 
-export const SITE_VARIANT = import.meta.env.VITE_VARIANT || 'full';
-
-// Shared base configuration (always included)
 export {
   API_URLS,
   REFRESH_INTERVALS,
@@ -13,16 +7,10 @@ export {
   STORAGE_KEYS,
 } from './variants/base';
 
-// Market data (shared)
 export { SECTORS, COMMODITIES, MARKET_SYMBOLS } from './markets';
-
-// Geo data (shared base)
 export { UNDERSEA_CABLES, MAP_URLS } from './geo';
-
-// AI Datacenters (shared)
 export { AI_DATA_CENTERS } from './ai-datacenters';
 
-// Feeds configuration (shared functions, variant-specific data)
 export {
   SOURCE_TIERS,
   getSourceTier,
@@ -33,26 +21,15 @@ export {
   ALERT_EXCLUSIONS,
   type SourceRiskProfile,
   type SourceType,
+  FEEDS,
+  INTEL_SOURCES,
 } from './feeds';
 
-// Panel configuration - imported from panels.ts
 export {
   DEFAULT_PANELS,
   DEFAULT_MAP_LAYERS,
   MOBILE_DEFAULT_MAP_LAYERS,
 } from './panels';
-
-// ============================================
-// VARIANT-SPECIFIC EXPORTS
-// Only import what's needed for each variant
-// ============================================
-
-// Full variant (geopolitical) - only included in full builds
-// These are large data files that should be tree-shaken in tech builds
-export {
-  FEEDS,
-  INTEL_SOURCES,
-} from './feeds';
 
 export {
   INTEL_HOTSPOTS,
@@ -78,17 +55,6 @@ export {
   type EntityEntry,
 } from './entities';
 
-// Tech variant - these are included in tech builds
-export { TECH_COMPANIES } from './tech-companies';
-export { AI_RESEARCH_LABS } from './ai-research-labs';
-export { STARTUP_ECOSYSTEMS } from './startup-ecosystems';
-export {
-  AI_REGULATIONS,
-  REGULATORY_ACTIONS,
-  COUNTRY_REGULATION_PROFILES,
-  getUpcomingDeadlines,
-  getRecentActions,
-} from './ai-regulations';
 export {
   STARTUP_HUBS,
   ACCELERATORS,
