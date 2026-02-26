@@ -11458,11 +11458,3 @@ body.has-critical-banner .panels-grid {
   border-radius: 4px;
   cursor: pointer;
 }
-.compound-alert-detail {
-  font-size: 12px;
-  line-height: 1.35;
-  max-height: 180px;
-  overflow-y: auto;
-  border-top: 1px solid rgba(255,255,255,0.12);
-  padding-top: 8px;
-}
