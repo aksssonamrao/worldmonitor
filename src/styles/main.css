@@ -11231,19 +11231,6 @@ body.has-critical-banner .panels-grid {
 /* ============================================
    MACRO SIGNALS / MARKET RADAR PANEL
    ============================================ */
-.macro-signals-container { padding: 4px 0; }
-.macro-verdict {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  border-radius: 6px;
-  background: rgba(255,255,255,0.04);
-  border-left: 3px solid rgba(255,255,255,0.2);
-}
-.macro-verdict.verdict-buy { border-left-color: #4caf50; background: rgba(76,175,80,0.08); }
-.macro-verdict.verdict-cash { border-left-color: #ff9800; background: rgba(255,152,0,0.08); }
 .verdict-label { font-size: 11px; color: rgba(255,255,255,0.5); text-transform: uppercase; }
 .verdict-value { font-size: 16px; font-weight: 700; letter-spacing: 1px; }
 .verdict-buy .verdict-value { color: #4caf50; }
@@ -11254,15 +11241,6 @@ body.has-critical-banner .panels-grid {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 6px;
 }
-.signal-card {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 6px;
-  padding: 8px;
-  transition: background 0.15s;
-}
-.signal-card:hover { background: rgba(255,255,255,0.06); }
-.signal-card-link { text-decoration: none; color: inherit; }
 .signal-header {
   display: flex;
   align-items: center;
@@ -11306,52 +11284,10 @@ body.has-critical-banner .panels-grid {
 /* ============================================
    ETF FLOWS PANEL
    ============================================ */
-.etf-flows-container { padding: 4px 0; }
-.etf-summary {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  padding: 8px;
-  margin-bottom: 8px;
-  border-radius: 6px;
-  background: rgba(255,255,255,0.04);
-}
-.etf-summary-item { text-align: center; }
-.etf-summary-label { display: block; font-size: 10px; color: rgba(255,255,255,0.4); margin-bottom: 2px; }
-.etf-summary-value { display: block; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.85); }
-.etf-summary-value.flow-inflow { color: #4caf50; }
-.etf-summary-value.flow-outflow { color: #f44336; }
-.etf-table-wrap { overflow-x: auto; }
-.etf-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.etf-table th {
-  text-align: left;
-  font-size: 10px;
-  color: rgba(255,255,255,0.4);
-  padding: 4px 6px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  font-weight: 500;
-  text-transform: uppercase;
-}
-.etf-table td {
-  padding: 5px 6px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-}
-.etf-ticker { font-weight: 600; color: rgba(255,255,255,0.9); }
-.etf-issuer { color: rgba(255,255,255,0.5); font-size: 11px; }
-.etf-flow.flow-inflow { color: #4caf50; }
-.etf-flow.flow-outflow { color: #f44336; }
-.etf-flow.flow-neutral { color: rgba(255,255,255,0.5); }
-.etf-volume { color: rgba(255,255,255,0.6); }
-.etf-change { font-weight: 500; }
 
 /* ============================================
    STABLECOIN PANEL
    ============================================ */
-.stablecoin-container { padding: 4px 0; }
 .stable-health {
   display: flex;
   align-items: center;

@@ -292,14 +292,12 @@ This prevents background tabs from consuming bandwidth while preserving user pre
 ### Market Data
 - **Stocks** - Major indices and tech stocks via Finnhub (Yahoo Finance backup)
 - **Commodities** - Oil, gold, natural gas, copper, VIX
-- **Crypto** - Bitcoin, Ethereum, Solana via CoinGecko
 - **Sector Heatmap** - Visual sector performance (11 SPDR sectors)
 - **Economic Indicators** - Fed data via FRED (assets, rates, yields)
 - **Oil Analytics** - EIA data: WTI/Brent prices, US production, US inventory with weekly changes
 - **Government Spending** - USASpending.gov: Recent federal contracts and awards
 
 ### Prediction Markets
-- Polymarket integration for event probability tracking
 - Correlation analysis with news events
 
 ### Search (⌘K)
@@ -410,7 +408,6 @@ Each entity in the registry contains:
 | **Indices** | 5+ | S&P 500, Dow Jones, NASDAQ |
 | **Sectors** | 10+ | Technology (XLK), Finance (XLF), Energy (XLE), Healthcare (XLV), Semiconductors (SMH) |
 | **Commodities** | 10+ | Oil (WTI), Gold, Natural Gas, Copper, Silver, VIX |
-| **Crypto** | 3 | Bitcoin, Ethereum, Solana |
 | **Countries** | 15+ | China, Russia, Iran, Israel, Ukraine, Taiwan, Saudi Arabia, UAE, Qatar, Turkey, Egypt |
 
 #### How Entity Matching Works
@@ -1885,7 +1882,6 @@ The map displays geographic attribution markers for major state-sponsored Advanc
 |-------|---------|---------|-----------------|
 | **APT28/29** | Fancy Bear, Cozy Bear | Russia (GRU/FSB) | Election interference, government espionage |
 | **APT41** | Double Dragon | China (MSS) | Supply chain attacks, intellectual property theft |
-| **Lazarus** | Hidden Cobra | North Korea (RGB) | Financial theft, cryptocurrency heists |
 | **APT33/35** | Elfin, Charming Kitten | Iran (IRGC) | Critical infrastructure, aerospace targeting |
 
 ### Why This Matters
@@ -2014,8 +2010,6 @@ Serverless proxy functions validate and clamp all parameters:
 | Endpoint | Validation |
 |----------|------------|
 | `/api/yahoo-finance` | Symbol format `[A-Za-z0-9.^=-]`, max 20 chars |
-| `/api/coingecko` | Coin IDs alphanumeric+hyphen, max 20 IDs |
-| `/api/polymarket` | Order field allowlist, limit clamped 1-100 |
 
 This prevents upstream API abuse and rate limit exhaustion from malformed requests.
 
@@ -2053,7 +2047,6 @@ Normal → Failure #1 → Failure #2 → OPEN (cooldown)
 | Service | Cooldown | Cache TTL |
 |---------|----------|-----------|
 | Yahoo Finance | 5 min | 10 min |
-| Polymarket | 5 min | 10 min |
 | USGS Earthquakes | 5 min | 10 min |
 | NWS Weather | 5 min | 10 min |
 | FRED Economic | 5 min | 10 min |
@@ -3101,7 +3094,6 @@ Different data sources update at different frequencies based on volatility and A
 |-----------|----------|-----------|
 | **News feeds** | 5 min | Balance freshness vs. rate limits |
 | **Stock quotes** | 1 min | Market hours require near-real-time |
-| **Crypto prices** | 1 min | 24/7 markets, high volatility |
 | **Predictions** | 5 min | Probabilities shift slowly |
 | **Earthquakes** | 5 min | USGS updates every 5 min |
 | **Weather alerts** | 10 min | NWS alert frequency |
@@ -3226,14 +3218,12 @@ The dashboard fetches data from various public APIs and data sources:
 | RSS2JSON | News feed parsing | No |
 | Finnhub | Stock quotes (primary) | Yes (free) |
 | Yahoo Finance | Stock indices & commodities (backup) | No |
-| CoinGecko | Cryptocurrency prices | No |
 | USGS | Earthquake data | No |
 | NASA EONET | Natural events (storms, fires, volcanoes, floods) | No |
 | NWS | Weather alerts | No |
 | FRED | Economic indicators (Fed data) | No |
 | EIA | Oil analytics (prices, production, inventory) | Yes (free) |
 | USASpending.gov | Federal government contracts & awards | No |
-| Polymarket | Prediction markets | No |
 | ACLED | Armed conflict & protest data | Yes (free) |
 | GDELT Geo | News-derived event geolocation + tensions | No |
 | GDELT Doc | Topic-based intelligence feeds (cyber, military, nuclear) | No |
@@ -3318,13 +3308,11 @@ src/
 │   ├── flights.ts            # FAA delay parsing
 │   ├── outages.ts            # Cloudflare Radar integration
 │   ├── rss.ts                # RSS parsing with circuit breakers
-│   ├── markets.ts            # Finnhub, Yahoo Finance, CoinGecko
 │   ├── earthquakes.ts        # USGS integration
 │   ├── weather.ts            # NWS alerts
 │   ├── fred.ts               # Federal Reserve data
 │   ├── oil-analytics.ts      # EIA oil prices, production, inventory
 │   ├── usa-spending.ts       # USASpending.gov contracts & awards
-│   ├── polymarket.ts         # Prediction markets (filtered)
 │   ├── clustering.ts         # Jaccard similarity clustering
 │   ├── correlation.ts        # Signal detection engine
 │   ├── velocity.ts           # Velocity & sentiment analysis
@@ -3355,14 +3343,12 @@ src/
 └── types/
 api/                          # Vercel Edge serverless proxies
 ├── cloudflare-outages.js     # Proxies Cloudflare Radar
-├── coingecko.js              # Crypto prices with validation
 ├── eia/[[...path]].js        # EIA petroleum data (oil prices, production)
 ├── faa-status.js             # FAA ground stops/delays
 ├── finnhub.js                # Stock quotes (batch, primary)
 ├── fred-data.js              # Federal Reserve economic data
 ├── gdelt-doc.js              # GDELT Doc API (topic intelligence)
 ├── gdelt-geo.js              # GDELT Geo API (event geolocation)
-├── polymarket.js             # Prediction markets with validation
 ├── yahoo-finance.js          # Stock indices/commodities (backup)
 ├── opensky-relay.js          # Military aircraft tracking
 ├── wingbits.js               # Aircraft enrichment proxy
@@ -3451,9 +3437,7 @@ Aggregates **70+ RSS feeds** from major news outlets, government sources, and sp
 - **AIS**: Real-time vessel positions
 - **ACLED/GDELT**: Protest and unrest events
 - **Yahoo Finance**: Stock quotes and indices
-- **CoinGecko**: Cryptocurrency prices
 - **FRED**: Federal Reserve economic data
-- **Polymarket**: Prediction market odds
 
 ## Data Attribution
 
@@ -3470,7 +3454,6 @@ Data provided by [The OpenSky Network](https://opensky-network.org). If you use 
 
 ### Financial Data
 - **Stock Quotes**: Powered by [Finnhub](https://finnhub.io/) (primary), with [Yahoo Finance](https://finance.yahoo.com/) as backup for indices and commodities
-- **Cryptocurrency**: Powered by [CoinGecko API](https://www.coingecko.com/en/api)
 - **Economic Indicators**: Data from [FRED](https://fred.stlouisfed.org/), Federal Reserve Bank of St. Louis
 
 ### Geophysical Data
@@ -3484,7 +3467,6 @@ Data provided by [The OpenSky Network](https://opensky-network.org). If you use 
 - **Internet Outages**: [Cloudflare Radar](https://radar.cloudflare.com/) (CC BY-NC 4.0)
 
 ### Other Sources
-- **Prediction Markets**: [Polymarket](https://polymarket.com/)
 
 ## Acknowledgments
 

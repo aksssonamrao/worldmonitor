@@ -92,7 +92,7 @@ export const ACCELERATORS: Accelerator[] = [
   { id: 'yc', name: 'Y Combinator', city: 'San Francisco', country: 'USA', lat: 37.7749, lon: -122.4194, type: 'accelerator', founded: 2005, notable: ['Airbnb', 'Stripe', 'Dropbox'] },
   { id: '500', name: '500 Global', city: 'San Francisco', country: 'USA', lat: 37.7849, lon: -122.4094, type: 'accelerator', founded: 2010 },
   { id: 'nfx', name: 'NFX Guild', city: 'San Francisco', country: 'USA', lat: 37.7849, lon: -122.4294, type: 'accelerator', notable: ['Lyft', 'Trulia'] },
-  { id: 'a16z-css', name: 'a16z crypto startup school', city: 'Menlo Park', country: 'USA', lat: 37.4530, lon: -122.1817, type: 'accelerator' },
+  { id: 'a16z-css', name: 'a16z startup school', city: 'Menlo Park', country: 'USA', lat: 37.4530, lon: -122.1817, type: 'accelerator' },
   { id: 'plug-play', name: 'Plug and Play', city: 'Sunnyvale', country: 'USA', lat: 37.3688, lon: -122.0363, type: 'accelerator', founded: 2006, notable: ['Dropbox', 'PayPal'] },
   { id: 'alchemist', name: 'Alchemist Accelerator', city: 'San Francisco', country: 'USA', lat: 37.7849, lon: -122.4144, type: 'accelerator', notable: ['LaunchDarkly', 'Rigetti'] },
   { id: 'indiebio', name: 'IndieBio', city: 'San Francisco', country: 'USA', lat: 37.7809, lon: -122.4044, type: 'accelerator', notable: ['Memphis Meats', 'Clara Foods'] },

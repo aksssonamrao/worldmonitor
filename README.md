@@ -25,7 +25,6 @@
 | News scattered across 100+ sources | **Single unified dashboard** with 100+ curated feeds |
 | No geospatial context for events | **Interactive map** with 25+ toggleable data layers |
 | Information overload | **AI-synthesized briefs** with focal point detection |
-| Crypto/macro signal noise | **7-signal market radar** with composite BUY/CASH verdict |
 | Expensive OSINT tools ($$$) | **100% free & open source** |
 | Static news feeds | **Real-time updates** with live video streams |
 
@@ -97,7 +96,6 @@ Both variants run from a single codebase — switch between them with one click.
 </details>
 
 <details>
-<summary><strong>Market & Crypto Intelligence</strong></summary>
 
 - 7-signal macro radar with composite BUY/CASH verdict
 - BTC spot ETF flow tracker (IBIT, FBTC, GBTC, and 7 more)
@@ -132,7 +130,6 @@ Both variants run from a single codebase — switch between them with one click.
 - **Regional convergence scoring** — when multiple signal types spike in the same geographic area, the system identifies convergence zones and escalates severity
 
 ### Story Sharing & Social Export
-- **Shareable intelligence stories** — generate country-level intelligence briefs with CII scores, threat counts, theater posture, and related prediction markets
 - **Multi-platform export** — custom-formatted sharing for Twitter/X, LinkedIn, WhatsApp, Telegram, Reddit, and Facebook with platform-appropriate formatting
 - **Deep links** — every story generates a unique URL (`/story?c=<country>&t=<type>`) with dynamic Open Graph meta tags for rich social previews
 - **Canvas-based image generation** — stories render as PNG images for visual sharing, with QR codes linking back to the live dashboard
@@ -141,7 +138,6 @@ Both variants run from a single codebase — switch between them with one click.
 - Signal intelligence with "Why It Matters" context
 - Infrastructure cascade analysis with proximity correlation
 - Maritime & aviation tracking with surge detection
-- Prediction market integration (Polymarket) as leading indicators
 - Service status monitoring (cloud providers, AI services)
 - Shareable map state via URL parameters (view, zoom, coordinates, time range, active layers)
 - Data freshness monitoring across 14 data sources with explicit intelligence gap reporting
@@ -297,11 +293,9 @@ All real-time data sources feed into a central signal aggregator that builds a u
 
 ### Data Freshness & Intelligence Gaps
 
-A singleton tracker monitors 14 data sources (GDELT, RSS, AIS, military flights, earthquakes, weather, outages, ACLED, Polymarket, economic indicators, NASA FIRMS, and more) with status categorization: fresh (<15 min), stale (1h), very_stale (6h), no_data, error, disabled. It explicitly reports **intelligence gaps** — what analysts can't see — preventing false confidence when critical data sources are down or degraded.
 
 ### Prediction Markets as Leading Indicators
 
-Polymarket geopolitical markets are queried using tag-based filters (Ukraine, Iran, China, Taiwan, etc.) with 5-minute caching. Market probability shifts are correlated with news volume: if a prediction market moves significantly before matching news arrives, this is flagged as a potential early-warning signal.
 
 ### Macro Signal Analysis (Market Radar)
 
@@ -329,7 +323,6 @@ The **Mayer Multiple** (BTC price / SMA200) provides a long-term valuation conte
 
 ### Stablecoin Peg Monitoring
 
-Five major stablecoins (USDT, USDC, DAI, FDUSD, USDe) are monitored via the CoinGecko API with 2-minute caching. Each coin's deviation from the $1.00 peg determines its health status:
 
 | Deviation | Status | Indicator |
 |-----------|--------|-----------|
@@ -337,7 +330,6 @@ Five major stablecoins (USDT, USDC, DAI, FDUSD, USDe) are monitored via the Coin
 | 0.5% – 1.0% | SLIGHT DEPEG | Yellow |
 | > 1.0% | DEPEGGED | Red |
 
-The panel aggregates total stablecoin market cap, 24h volume, and an overall health status (HEALTHY / CAUTION / WARNING). The `coins` query parameter accepts a comma-separated list of CoinGecko IDs, validated against a `[a-z0-9-]+` regex to prevent injection.
 
 ### BTC ETF Flow Estimation
 
@@ -387,8 +379,6 @@ World Monitor uses 45+ Vercel Edge Functions as a lightweight API layer. Each ed
 
 - **RSS Proxy** — domain-allowlisted proxy for 100+ feeds, preventing CORS issues and hiding origin servers. Feeds from domains that block Vercel IPs are automatically routed through the Railway relay.
 - **AI Pipeline** — Groq and OpenRouter edge functions with Redis deduplication, so identical headlines across concurrent users only trigger one LLM call. The classify-event endpoint pauses its queue on 500 errors to avoid wasting API quota.
-- **Data Adapters** — GDELT, ACLED, OpenSky, USGS, NASA FIRMS, FRED, Yahoo Finance, CoinGecko, mempool.space, and others each have dedicated edge functions that normalize responses into consistent schemas
-- **Market Intelligence** — macro signals, ETF flows, and stablecoin monitors compute derived analytics server-side (VWAP, SMA, peg deviation, flow estimates) and cache results in Redis
 - **Temporal Baseline** — Welford's algorithm state is persisted in Redis across requests, building statistical baselines without a traditional database
 - **Custom Scrapers** — sources without RSS feeds (FwdStart, GitHub Trending, tech events) are scraped and transformed into RSS-compatible formats
 
@@ -442,9 +432,8 @@ Request → [1] In-Memory Cache → [2] Redis (Upstash) → [3] Upstream API
 |------|-------|-----|---------|
 | **In-memory** | Per edge function instance | Varies (60s–900s) | Eliminates Redis round-trips for hot paths |
 | **Redis (Upstash)** | Cross-user, cross-instance | Varies (120s–900s) | Deduplicates API calls across all visitors |
-| **Upstream** | Source of truth | N/A | External API (Yahoo Finance, CoinGecko, etc.) |
 
-Cache keys are versioned (`opensky:v2:lamin=...`, `macro-signals:v2:default`) so schema changes don't serve stale formats. Every response includes an `X-Cache` header (`HIT`, `REDIS-HIT`, `MISS`, `REDIS-STALE`, `REDIS-ERROR-FALLBACK`) for debugging.
+Cache keys are versioned (for example `opensky:v2:lamin=...`) so schema changes do not serve stale formats. Every response includes an `X-Cache` header (`HIT`, `REDIS-HIT`, `MISS`, `REDIS-STALE`, `REDIS-ERROR-FALLBACK`) for debugging.
 
 The AI summarization pipeline adds content-based deduplication: headlines are hashed and checked against Redis before calling Groq, so the same breaking news viewed by 1,000 concurrent users triggers exactly one LLM call.
 
@@ -459,7 +448,6 @@ The AI summarization pipeline adds content-based deduplication: headlines are ha
 | **Railway domain allowlist** | The Railway relay has a separate, smaller domain allowlist for feeds that need the alternate origin. |
 | **API key isolation** | All API keys live server-side in Vercel environment variables. The browser never sees Groq, OpenRouter, ACLED, Finnhub, or other credentials. |
 | **Input sanitization** | User-facing content passes through `escapeHtml()` (prevents XSS) and `sanitizeUrl()` (blocks `javascript:` and `data:` URIs). URLs use `escapeAttr()` for attribute context encoding. |
-| **Query parameter validation** | API endpoints validate input formats (e.g., stablecoin coin IDs must match `[a-z0-9-]+`, bounding box params are numeric). |
 | **IP rate limiting** | AI endpoints use Upstash Redis-backed rate limiting to prevent abuse of Groq/OpenRouter quotas. |
 | **No debug endpoints** | The `api/debug-env.js` endpoint returns 404 in production — it exists only as a disabled placeholder. |
 
@@ -530,8 +518,6 @@ pytest services/compound_api/tests
 | **Frontend** | TypeScript, Vite, deck.gl (WebGL), MapLibre GL |
 | **AI/ML** | Groq (Llama 3.1 8B), OpenRouter (fallback), Transformers.js (browser-side T5, NER, embeddings) |
 | **Caching** | Redis (Upstash) — 3-tier cache with in-memory + Redis + upstream, cross-user AI deduplication |
-| **Geopolitical APIs** | OpenSky, GDELT, ACLED, UCDP, HAPI, USGS, NASA FIRMS, Polymarket, Cloudflare Radar |
-| **Market APIs** | Yahoo Finance (equities, forex, crypto), CoinGecko (stablecoins), mempool.space (BTC hashrate), alternative.me (Fear & Greed) |
 | **Economic APIs** | FRED (Federal Reserve), EIA (Energy), Finnhub (stock quotes) |
 | **Deployment** | Vercel Edge Functions (45+ endpoints) + Railway (WebSocket relay) |
 | **Data** | 100+ RSS feeds, ADS-B transponders, AIS maritime data, VIIRS satellite imagery |
@@ -577,7 +563,6 @@ npm run typecheck    # TypeScript type checking
 
 - [x] 45+ API edge functions for programmatic access
 - [x] Dual-site variant system (geopolitical + tech)
-- [x] Market intelligence (macro signals, ETF flows, stablecoin peg monitoring)
 - [x] Railway relay for WebSocket and blocked-domain proxying
 - [x] CORS origin allowlist and security hardening
 - [ ] Mobile-optimized views

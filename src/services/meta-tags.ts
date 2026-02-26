@@ -7,7 +7,7 @@ interface StoryMeta {
   ciiScore?: number;
   ciiLevel?: string;
   trend?: string;
-  type: 'ciianalysis' | 'crisisalert' | 'dailybrief' | 'marketfocus';
+  type: 'ciianalysis' | 'crisisalert' | 'dailybrief';
 }
 
 const BASE_URL = 'https://worldmonitor.app';
@@ -86,10 +86,9 @@ function generateDescription(
   }
   
   const typeDescriptions: Record<string, string> = {
-    ciianalysis: 'Full intelligence analysis with military posture and prediction markets',
+    ciianalysis: 'Full intelligence analysis with military posture and global risk signals',
     crisisalert: 'Crisis-focused briefing with convergence alerts',
     dailybrief: 'AI-synthesized daily briefing of top stories',
-    marketfocus: 'Prediction market probabilities and market-moving events',
   };
   
   if (type && typeDescriptions[type]) {

@@ -1,5 +1,5 @@
 import { Panel } from './Panel';
-import type { MarketData, CryptoData } from '@/types';
+import type { MarketData } from '@/types';
 import { formatPrice, formatChange, getChangeClass, getHeatmapClass } from '@/utils';
 import { escapeHtml } from '@/utils/sanitize';
 
@@ -98,34 +98,9 @@ export class CommoditiesPanel extends Panel {
   }
 }
 
-export class CryptoPanel extends Panel {
-  constructor() {
-    super({ id: 'crypto', title: 'Crypto' });
-  }
-
-  public renderCrypto(data: CryptoData[]): void {
-    if (data.length === 0) {
-      this.showError('Failed to load crypto data');
-      return;
-    }
-
-    const html = data
-      .map(
-        (coin) => `
-      <div class="market-item">
-        <div class="market-info">
-          <span class="market-name">${escapeHtml(coin.name)}</span>
-          <span class="market-symbol">${escapeHtml(coin.symbol)}</span>
-        </div>
-        <div class="market-data">
-          <span class="market-price">$${coin.price.toLocaleString()}</span>
-          <span class="market-change ${getChangeClass(coin.change)}">${formatChange(coin.change)}</span>
-        </div>
-      </div>
-    `
-      )
-      .join('');
-
-    this.setContent(html);
+export class DigitalPanel extends Panel {
+  constructor() { super({ id: 'digital', title: 'Digital' }); }
+  public renderDigital(_data: Array<{name:string;symbol:string;price:number;change:number}>): void {
+    this.setContent('<div class="panel-placeholder">Removed</div>');
   }
 }

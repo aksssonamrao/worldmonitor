@@ -95,12 +95,13 @@ export interface MarketData {
   change: number | null;
 }
 
-export interface CryptoData {
-  name: string;
-  symbol: string;
-  price: number;
-  change: number;
+export interface PredictionMarket {
+  title: string;
+  yesPrice: number;
+  volume?: number;
+  url?: string;
 }
+
 
 export type EscalationTrend = 'escalating' | 'stable' | 'de-escalating';
 
@@ -494,12 +495,6 @@ export interface CriticalMineralProject {
   significance: string;
 }
 
-export interface PredictionMarket {
-  title: string;
-  yesPrice: number;
-  volume?: number;
-  url?: string;
-}
 
 export interface AppState {
   currentView: 'global' | 'us';
@@ -996,7 +991,7 @@ export interface HeadlineWithUrl {
 
 export interface EntityMention {
   entityId: string;
-  entityType: 'country' | 'company' | 'index' | 'commodity' | 'crypto' | 'sector';
+  entityType: 'country' | 'company' | 'index' | 'commodity' | 'sector';
   displayName: string;
   mentionCount: number;
   avgConfidence: number;
@@ -1007,7 +1002,7 @@ export interface EntityMention {
 export interface FocalPoint {
   id: string;
   entityId: string;
-  entityType: 'country' | 'company' | 'index' | 'commodity' | 'crypto' | 'sector';
+  entityType: 'country' | 'company' | 'index' | 'commodity' | 'sector';
   displayName: string;
 
   // News dimension

@@ -12,9 +12,6 @@ export const API_URLS = {
     `/api/finnhub?symbols=${symbols.map(s => encodeURIComponent(s)).join(',')}`,
   yahooFinance: (symbol: string) =>
     `/api/yahoo-finance?symbol=${encodeURIComponent(symbol)}`,
-  coingecko:
-    '/api/coingecko?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true',
-  polymarket: '/api/polymarket?closed=false&order=volume&ascending=false&limit=100',
   earthquakes: '/api/earthquakes',
   // Tech variant APIs
   arxiv: (category: string = 'cs.AI', maxResults: number = 50) =>
@@ -29,7 +26,6 @@ export const API_URLS = {
 export const REFRESH_INTERVALS = {
   feeds: 5 * 60 * 1000,
   markets: 60 * 1000,
-  crypto: 60 * 1000,
   predictions: 5 * 60 * 1000,
   ais: 10 * 60 * 1000,
   arxiv: 60 * 60 * 1000,
