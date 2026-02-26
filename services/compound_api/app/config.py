@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from os import getenv
+from typing import Any
+import json
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,9 @@ class Settings:
     default_bbox: tuple[float, float, float, float]
     max_bbox_area_deg2: float
     max_qps: float
+    event_lookback_hours: int
+    alert_score_threshold: float
+    event_type_weights: dict[str, float]
 
 
 def _csv_ints(value: str, *, default: str) -> list[int]:
@@ -47,6 +52,19 @@ def _parse_int(name: str, raw: str | None, default: int) -> int:
     except ValueError:
         raise RuntimeError(f"Invalid value for {name}: expected an integer, got {raw!r}")
 
+
+
+
+def _parse_json(name: str, raw: str | None, default: dict[str, Any]) -> dict[str, Any]:
+    if not raw:
+        return default
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid value for {name}: expected valid JSON, got {raw!r}. Error: {e}")
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Invalid value for {name}: expected JSON object, got {type(value).__name__}")
+    return value
 
 def _bbox(value: str, *, default: str) -> tuple[float, float, float, float]:
     raw = value or default
@@ -93,4 +111,7 @@ def load_settings() -> Settings:
         default_bbox=_bbox(getenv('DEFAULT_BBOX', ''), default='72.0,8.0,88.0,23.0'),
         max_bbox_area_deg2=_parse_float('MAX_BBOX_AREA_DEG2', getenv('MAX_BBOX_AREA_DEG2'), 50.0),
         max_qps=_parse_float('MAX_QPS', getenv('MAX_QPS'), 5.0),
+        event_lookback_hours=_parse_int('EVENT_LOOKBACK_HOURS', getenv('EVENT_LOOKBACK_HOURS'), 72),
+        alert_score_threshold=_parse_float('ALERT_SCORE_THRESHOLD', getenv('ALERT_SCORE_THRESHOLD'), 20.0),
+        event_type_weights=_parse_json('EVENT_TYPE_WEIGHTS_JSON', getenv('EVENT_TYPE_WEIGHTS_JSON'), {'PROTEST': 1.2, 'STRIKE': 1.2, 'CONFLICT': 1.5, 'DISASTER': 1.4, 'OUTAGE': 1.3, 'ACCIDENT': 1.1, 'OTHER': 1.0}),
     )

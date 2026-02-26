@@ -44,3 +44,10 @@ def test_rate_limit_and_retry(monkeypatch):
     rows = asyncio.run(client.fetch_hourly(10.0, 20.0, 1))
     assert len(rows) == 1
     assert calls['n'] == 2
+
+
+def test_invalid_event_type_weights_json(monkeypatch):
+    monkeypatch.setenv('GOOGLE_WEATHER_API_KEY', 'test-key')
+    monkeypatch.setenv('EVENT_TYPE_WEIGHTS_JSON', '{invalid')
+    with pytest.raises(RuntimeError, match='Invalid value for EVENT_TYPE_WEIGHTS_JSON'):
+        load_settings()
