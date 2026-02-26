@@ -146,7 +146,7 @@ export class SearchModal {
 
     // Prioritize: news first, then other dynamic data, then static infrastructure
     const priority: SearchResultType[] = [
-      'news', 'prediction', 'market', 'earthquake', 'outage',  // Dynamic/timely
+      'news', 'market', 'earthquake', 'outage',  // Dynamic/timely
       'conflict', 'hotspot',  // Current events
       'base', 'pipeline', 'cable', 'datacenter', 'nuclear', 'irradiator',  // Infrastructure
       'techcompany', 'ailab', 'startup', 'techevent', 'techhq', 'accelerator'  // Tech

@@ -21,20 +21,20 @@ interface ApiStatus {
 const TECH_FEEDS = new Set([
   'Tech', 'Ai', 'Startups', 'Vcblogs', 'RegionalStartups',
   'Unicorns', 'Accelerators', 'Security', 'Policy', 'Layoffs',
-  'Finance', 'Hardware', 'Cloud', 'Dev', 'Tech Events', 'Crypto',
-  'Markets', 'Events', 'Producthunt', 'Funding', 'Polymarket'
+  'Finance', 'Hardware', 'Cloud', 'Dev', 'Tech Events', 'Digital',
+  'Markets', 'Events', 'Producthunt', 'Funding', 'Forecasts'
 ]);
 const TECH_APIS = new Set([
-  'RSS Proxy', 'Finnhub', 'CoinGecko', 'Tech Events API', 'Service Status', 'Polymarket'
+  'RSS Proxy', 'Finnhub', 'CoinGecko', 'Tech Events API', 'Service Status', 'Forecasts'
 ]);
 
 const WORLD_FEEDS = new Set([
   'Politics', 'Middleeast', 'Tech', 'Ai', 'Finance',
   'Gov', 'Intel', 'Layoffs', 'Thinktanks', 'Energy',
-  'Polymarket', 'Weather', 'NetBlocks', 'Shipping', 'Military'
+  'Forecasts', 'Weather', 'NetBlocks', 'Shipping', 'Military'
 ]);
 const WORLD_APIS = new Set([
-  'RSS2JSON', 'Finnhub', 'CoinGecko', 'Polymarket', 'USGS', 'FRED',
+  'RSS2JSON', 'Finnhub', 'CoinGecko', 'Forecasts', 'USGS', 'FRED',
   'AISStream', 'GDELT Doc', 'EIA', 'USASpending', 'PizzINT', 'FIRMS'
 ]);
 

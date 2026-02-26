@@ -37,7 +37,7 @@ export const FLOW_DROP_KEYWORDS = [
 ];
 
 export const TOPIC_KEYWORDS = [
-  'iran', 'israel', 'ukraine', 'russia', 'china', 'taiwan', 'oil', 'crypto',
+  'iran', 'israel', 'ukraine', 'russia', 'china', 'taiwan', 'oil',
   'fed', 'interest', 'inflation', 'recession', 'war', 'sanctions', 'tariff',
   'ai', 'tech', 'layoff', 'trump', 'biden', 'election',
 ];
@@ -51,7 +51,6 @@ export const TOPIC_MAPPINGS: Record<string, string[]> = {
   'taiwan': ['taiwan', 'china'],
   'trump': ['trump', 'election', 'tariff'],
   'fed': ['fed', 'interest', 'inflation', 'recession'],
-  'bitcoin': ['crypto', 'bitcoin'],
   'recession': ['recession', 'fed', 'inflation'],
 };
 
@@ -131,7 +130,7 @@ export const SIGNAL_CONTEXT: Record<SignalType, SignalContext> = {
   prediction_leads_news: {
     whyItMatters: 'Prediction markets often price in information before it becomes news—traders may have early access to developments.',
     actionableInsight: 'Monitor for breaking news in the next 1-6 hours that could explain the market move.',
-    confidenceNote: 'Higher confidence if multiple prediction markets move in same direction.',
+    confidenceNote: 'Higher confidence if multiple independent sources move in same direction.',
   },
   news_leads_markets: {
     whyItMatters: 'News is breaking faster than markets are reacting—potential mispricing opportunity.',

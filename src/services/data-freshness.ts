@@ -6,13 +6,13 @@
 
 export type DataSourceId =
   | 'acled'      // Protests/conflicts
+  | 'forecasts'
   | 'opensky'    // Military flights
   | 'wingbits'   // Aircraft enrichment
   | 'ais'        // Vessel tracking
   | 'usgs'       // Earthquakes
   | 'gdelt'      // News velocity
   | 'rss'        // RSS feeds
-  | 'polymarket' // Prediction markets
   | 'outages'    // Internet outages
   | 'weather'    // Weather alerts
   | 'economic'   // Economic indicators (FRED)
@@ -63,9 +63,9 @@ const SOURCE_METADATA: Record<DataSourceId, { name: string; requiredForRisk: boo
   wingbits: { name: 'Aircraft Enrichment', requiredForRisk: false, panelId: 'military' },
   ais: { name: 'Vessel Tracking', requiredForRisk: false, panelId: 'shipping' },
   usgs: { name: 'Earthquakes', requiredForRisk: false, panelId: 'natural' },
+  forecasts: { name: 'Predictions', requiredForRisk: false, panelId: 'forecasts' },
   gdelt: { name: 'News Intelligence', requiredForRisk: true, panelId: 'intel' },
   rss: { name: 'Live News Feeds', requiredForRisk: true, panelId: 'live-news' },
-  polymarket: { name: 'Prediction Markets', requiredForRisk: false, panelId: 'polymarket' },
   outages: { name: 'Internet Outages', requiredForRisk: false, panelId: 'outages' },
   weather: { name: 'Weather Alerts', requiredForRisk: false, panelId: 'weather' },
   economic: { name: 'Economic Data (FRED)', requiredForRisk: false, panelId: 'economic' },
@@ -309,9 +309,9 @@ const INTELLIGENCE_GAP_MESSAGES: Record<DataSourceId, string> = {
   wingbits: 'Aircraft identification limited—enrichment service unavailable',
   ais: 'Vessel positions outdated—possible dark shipping or AIS transponder-off activity undetected',
   usgs: 'Recent earthquakes may not be shown—seismic data unavailable',
+  forecasts: 'Prediction signals unavailable',
   gdelt: 'News event velocity unknown—GDELT intelligence feed offline',
   rss: 'Breaking news may be missed—RSS feeds not updating',
-  polymarket: 'Prediction market signals unavailable—early warning capability degraded',
   outages: 'Internet disruptions may be unreported—outage monitoring offline',
   weather: 'Severe weather warnings may be missed—weather alerts unavailable',
   economic: 'Economic indicators stale—Fed/Treasury data not updating',

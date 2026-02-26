@@ -13,7 +13,7 @@ const VARIANT_META: Record<string, {
   world: {
     title: 'World Monitor - Real-Time Global Intelligence Dashboard',
     description: 'Real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data. OSINT in one view.',
-    keywords: 'global intelligence, geopolitical dashboard, world news, market data, military bases, nuclear facilities, undersea cables, conflict zones, real-time monitoring, situation awareness, OSINT, flight tracking, AIS ships, earthquake monitor, protest tracker, power outages, oil prices, government spending, polymarket predictions',
+    keywords: 'global intelligence, geopolitical dashboard, world news, market data, military bases, nuclear facilities, undersea cables, conflict zones, real-time monitoring, situation awareness, OSINT, flight tracking, AIS ships, earthquake monitor, protest tracker, power outages, oil prices, government spending',
     url: 'https://worldmonitor.app/',
     siteName: 'World Monitor',
     features: [
@@ -148,24 +148,6 @@ export default defineConfig({
         target: 'https://query1.finance.yahoo.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/yahoo/, ''),
-      },
-      // CoinGecko API
-      '/api/coingecko': {
-        target: 'https://api.coingecko.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/coingecko/, ''),
-      },
-      // Polymarket API
-      '/api/polymarket': {
-        target: 'https://gamma-api.polymarket.com',
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/api\/polymarket/, ''),
-        configure: (proxy) => {
-          proxy.on('error', (err) => {
-            console.log('Polymarket proxy error:', err.message);
-          });
-        },
       },
       // USGS Earthquake API
       '/api/earthquake': {

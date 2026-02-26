@@ -1,9 +1,8 @@
 /**
  * CountryIntelModal - Shows AI-generated intelligence brief when user clicks a country
  */
-import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
+import { escapeHtml } from '@/utils/sanitize';
 import type { CountryScore } from '@/services/country-instability';
-import type { PredictionMarket } from '@/types';
 
 interface CountryIntelData {
   brief: string;
@@ -170,7 +169,6 @@ export class CountryIntelModal {
     chips.push(`<span class="signal-chip stock-loading">📈 Loading index...</span>`);
     html += `<div class="active-signals">${chips.join('')}</div>`;
 
-    html += `<div class="country-markets-section"><span class="intel-loading-text">Loading prediction markets...</span></div>`;
 
     html += `
       <div class="intel-brief-section">
@@ -211,34 +209,8 @@ export class CountryIntelModal {
     `;
   }
 
-  public updateMarkets(markets: PredictionMarket[]): void {
-    const section = this.contentEl.querySelector('.country-markets-section');
-    if (!section) return;
-
-    if (markets.length === 0) {
-      section.innerHTML = '<span class="intel-loading-text" style="opacity:0.5">No prediction markets found</span>';
-      return;
-    }
-
-    const items = markets.map(m => {
-      const pct = Math.round(m.yesPrice);
-      const noPct = 100 - pct;
-      const vol = m.volume ? `$${(m.volume / 1000).toFixed(0)}k vol` : '';
-      const safeUrl = sanitizeUrl(m.url || '');
-      const link = safeUrl ? ` <a href="${safeUrl}" target="_blank" rel="noopener" class="market-link">↗</a>` : '';
-      return `
-        <div class="market-item">
-          <div class="market-title">${escapeHtml(m.title.slice(0, 80))}${link}</div>
-          <div class="market-bar">
-            <div class="market-yes" style="width:${pct}%">${pct}%</div>
-            <div class="market-no" style="width:${noPct}%">${noPct > 15 ? noPct + '%' : ''}</div>
-          </div>
-          ${vol ? `<div class="market-vol">${vol}</div>` : ''}
-        </div>
-      `;
-    }).join('');
-
-    section.innerHTML = `<div class="markets-label">📊 Prediction Markets</div>${items}`;
+  public updateMarkets(_markets: Array<{ title: string; yesPrice: number; volume?: number; url?: string }>): void {
+    return;
   }
 
   public updateStock(data: StockIndexData): void {

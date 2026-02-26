@@ -188,13 +188,9 @@ export const DEFAULT_PANELS: Record<string, PanelConfig> = {
   layoffs: { name: 'Layoffs Tracker', enabled: true, priority: 1 },
   markets: { name: 'Tech Stocks', enabled: true, priority: 2 },
   finance: { name: 'Financial News', enabled: true, priority: 2 },
-  crypto: { name: 'Crypto', enabled: true, priority: 2 },
   hardware: { name: 'Semiconductors & Hardware', enabled: true, priority: 2 },
   cloud: { name: 'Cloud & Infrastructure', enabled: true, priority: 2 },
   dev: { name: 'Developer Community', enabled: true, priority: 2 },
-  'macro-signals': { name: 'Market Radar', enabled: true, priority: 2 },
-  'etf-flows': { name: 'BTC ETF Tracker', enabled: true, priority: 2 },
-  stablecoins: { name: 'Stablecoins', enabled: true, priority: 2 },
   monitors: { name: 'My Monitors', enabled: true, priority: 2 },
 };
 

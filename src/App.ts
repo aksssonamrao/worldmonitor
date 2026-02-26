@@ -12,8 +12,8 @@ import {
   STORAGE_KEYS,
   SITE_VARIANT,
 } from '@/config';
-import { fetchCategoryFeeds, fetchMultipleStocks, fetchCrypto, fetchPredictions, fetchEarthquakes, fetchWeatherAlerts, fetchFredData, fetchInternetOutages, isOutagesConfigured, fetchAisSignals, initAisStream, getAisStatus, disconnectAisStream, isAisConfigured, fetchCableActivity, fetchProtestEvents, getProtestStatus, fetchFlightDelays, fetchMilitaryFlights, fetchMilitaryVessels, initMilitaryVesselStream, isMilitaryVesselTrackingConfigured, initDB, updateBaseline, calculateDeviation, addToSignalHistory, saveSnapshot, cleanOldSnapshots, analysisWorker, fetchPizzIntStatus, fetchGdeltTensions, fetchNaturalEvents, fetchRecentAwards, fetchOilAnalytics } from '@/services';
-import { fetchCountryMarkets } from '@/services/polymarket';
+import { fetchCategoryFeeds, fetchMultipleStocks, fetchDigital, fetchPredictions, fetchEarthquakes, fetchWeatherAlerts, fetchFredData, fetchInternetOutages, isOutagesConfigured, fetchAisSignals, initAisStream, getAisStatus, disconnectAisStream, isAisConfigured, fetchCableActivity, fetchProtestEvents, getProtestStatus, fetchFlightDelays, fetchMilitaryFlights, fetchMilitaryVessels, initMilitaryVesselStream, isMilitaryVesselTrackingConfigured, initDB, updateBaseline, calculateDeviation, addToSignalHistory, saveSnapshot, cleanOldSnapshots, analysisWorker, fetchPizzIntStatus, fetchGdeltTensions, fetchNaturalEvents, fetchRecentAwards, fetchOilAnalytics } from '@/services';
+import { fetchCountryMarkets } from '@/services/forecasts';
 import { mlWorker } from '@/services/ml-worker';
 import { clusterNewsHybrid } from '@/services/clustering';
 import { ingestProtests, ingestFlights, ingestVessels, ingestEarthquakes, detectGeoConvergence, geoConvergenceToSignal } from '@/services/geo-convergence';
@@ -40,7 +40,7 @@ import {
   MarketPanel,
   HeatmapPanel,
   CommoditiesPanel,
-  CryptoPanel,
+  DigitalPanel,
   PredictionPanel,
   MonitorPanel,
   Panel,
@@ -64,7 +64,7 @@ import {
   TechReadinessPanel,
   MacroSignalsPanel,
   ETFFlowsPanel,
-  StablecoinPanel,
+  LiquidityPanel,
 } from '@/components';
 import type { SearchResult } from '@/components/SearchModal';
 import { collectStoryData } from '@/services/story-data';
@@ -482,7 +482,7 @@ export class App {
       // Update UI chip as soon as stock data arrives
       stockPromise.then((stock) => this.countryIntelModal!.updateStock(stock));
 
-      // Fetch country prediction markets
+      // Fetch country forecast signals
       fetchCountryMarkets(geo.country)
         .then((markets) => this.countryIntelModal!.updateMarkets(markets))
         .catch(() => this.countryIntelModal!.updateMarkets([]));
@@ -832,7 +832,7 @@ export class App {
         break;
       }
       case 'prediction': {
-        this.scrollToPanel('polymarket');
+        this.scrollToPanel('forecasts');
         break;
       }
       case 'base': {
@@ -1068,7 +1068,7 @@ export class App {
       liquidity: 0,
     }));
     this.latestPredictions = predictions;
-    (this.panels['polymarket'] as PredictionPanel).renderPredictions(predictions);
+    (this.panels['forecasts'] as PredictionPanel).renderPredictions(predictions);
 
     this.map?.setHotspotLevels(snapshot.hotspotLevels);
   }
@@ -1355,7 +1355,7 @@ export class App {
     this.panels['commodities'] = commoditiesPanel;
 
     const predictionPanel = new PredictionPanel();
-    this.panels['polymarket'] = predictionPanel;
+    this.panels['forecasts'] = predictionPanel;
 
     const govPanel = new NewsPanel('gov', 'Government / Policy');
     this.attachRelatedAssetHandlers(govPanel);
@@ -1367,8 +1367,8 @@ export class App {
     this.newsPanels['intel'] = intelPanel;
     this.panels['intel'] = intelPanel;
 
-    const cryptoPanel = new CryptoPanel();
-    this.panels['crypto'] = cryptoPanel;
+    const digitalPanel = new DigitalPanel();
+    this.panels['digital'] = digitalPanel;
 
     const middleeastPanel = new NewsPanel('middleeast', 'Middle East / MENA');
     this.attachRelatedAssetHandlers(middleeastPanel);
@@ -1530,10 +1530,10 @@ export class App {
     const techReadinessPanel = new TechReadinessPanel();
     this.panels['tech-readiness'] = techReadinessPanel;
 
-    // Crypto & Market Intelligence Panels
+    // Digital & Market Intelligence Panels
     this.panels['macro-signals'] = new MacroSignalsPanel();
     this.panels['etf-flows'] = new ETFFlowsPanel();
-    this.panels['stablecoins'] = new StablecoinPanel();
+    this.panels['liquiditys'] = new LiquidityPanel();
 
     // AI Insights Panel (desktop only - hides itself on mobile)
     const insightsPanel = new InsightsPanel();
@@ -2538,9 +2538,9 @@ export class App {
     }
 
     try {
-      // Crypto
-      const crypto = await fetchCrypto();
-      (this.panels['crypto'] as CryptoPanel).renderCrypto(crypto);
+      // Digital
+      const digital = await fetchDigital();
+      (this.panels['digital'] as DigitalPanel).renderDigital(digital);
       this.statusPanel?.updateApi('CoinGecko', { status: 'ok' });
     } catch {
       this.statusPanel?.updateApi('CoinGecko', { status: 'error' });
@@ -2551,18 +2551,18 @@ export class App {
     try {
       const predictions = await fetchPredictions();
       this.latestPredictions = predictions;
-      (this.panels['polymarket'] as PredictionPanel).renderPredictions(predictions);
+      (this.panels['forecasts'] as PredictionPanel).renderPredictions(predictions);
 
-      this.statusPanel?.updateFeed('Polymarket', { status: 'ok', itemCount: predictions.length });
-      this.statusPanel?.updateApi('Polymarket', { status: 'ok' });
-      dataFreshness.recordUpdate('polymarket', predictions.length);
+      this.statusPanel?.updateFeed('Forecasts', { status: 'ok', itemCount: predictions.length });
+      this.statusPanel?.updateApi('Forecasts', { status: 'ok' });
+      dataFreshness.recordUpdate('forecasts', predictions.length);
 
       // Run correlation analysis in background (fire-and-forget via Web Worker)
       void this.runCorrelationAnalysis();
     } catch (error) {
-      this.statusPanel?.updateFeed('Polymarket', { status: 'error', errorMessage: String(error) });
-      this.statusPanel?.updateApi('Polymarket', { status: 'error' });
-      dataFreshness.recordError('polymarket', String(error));
+      this.statusPanel?.updateFeed('Forecasts', { status: 'error', errorMessage: String(error) });
+      this.statusPanel?.updateApi('Forecasts', { status: 'error' });
+      dataFreshness.recordError('forecasts', String(error));
     }
   }
 

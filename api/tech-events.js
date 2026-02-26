@@ -41,7 +41,7 @@ const CURATED_EVENTS = [
     endDate: '2026-04-30',
     url: 'https://www.token2049.com',
     source: 'curated',
-    description: 'Premier crypto event in Dubai',
+    description: 'Premier technology event in Dubai',
   },
   {
     id: 'collision-2026',

@@ -57,7 +57,7 @@ export async function fetchTopTechStories(): Promise<HackerNewsStory[]> {
     'algorithm', 'data', 'cloud', 'aws', 'azure', 'serverless',
     'startup', 'vc', 'funding', 'acquisition', 'ipo', 'tech', 'software',
     'programming', 'code', 'github', 'open source', 'cybersecurity',
-    'blockchain', 'crypto', 'web3', 'developer', 'api', 'framework'
+'developer', 'api', 'framework'
   ];
 
   const techStories = stories.filter(story => {

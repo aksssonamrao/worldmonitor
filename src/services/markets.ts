@@ -1,5 +1,5 @@
-import type { MarketData, CryptoData } from '@/types';
-import { API_URLS, CRYPTO_MAP } from '@/config';
+import type { MarketData } from '@/types';
+import { API_URLS } from '@/config';
 import { fetchWithProxy } from '@/utils';
 
 interface FinnhubQuote {
@@ -29,13 +29,6 @@ interface YahooFinanceResponse {
         previousClose?: number;
       };
     }>;
-  };
-}
-
-interface CoinGeckoResponse {
-  [key: string]: {
-    usd: number;
-    usd_24h_change: number;
   };
 }
 
@@ -163,23 +156,6 @@ export async function fetchStockQuote(
   return results[0] || { symbol, name, display, price: null, change: null };
 }
 
-export async function fetchCrypto(): Promise<CryptoData[]> {
-  try {
-    const response = await fetchWithProxy(API_URLS.coingecko);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data: CoinGeckoResponse = await response.json();
-
-    return Object.entries(CRYPTO_MAP).map(([id, info]) => {
-      const coinData = data[id];
-      return {
-        name: info.name,
-        symbol: info.symbol,
-        price: coinData?.usd ?? 0,
-        change: coinData?.usd_24h_change ?? 0,
-      };
-    });
-  } catch (e) {
-    console.error('Failed to fetch crypto:', e);
-    return [];
-  }
+export async function fetchDigital(): Promise<Array<{name:string;symbol:string;price:number;change:number}>> {
+  return [];
 }
