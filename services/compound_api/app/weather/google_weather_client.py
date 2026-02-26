@@ -51,10 +51,13 @@ class GoogleWeatherClient:
             await self.bucket.consume()
             try:
                 resp = await self.client.get(f'{self.base_url}/forecast/hours:lookup', params=params)
-            except httpx.HTTPError as exc:
+            except httpx.TimeoutException as exc:
                 if attempt <= 3:
                     await asyncio.sleep(2 ** (attempt - 1))
                     continue
+                raise RuntimeError(f'google weather request failed after retries for ({lat},{lon}): {exc!s}') from exc
+            except httpx.RequestError as exc:
+                # Non-timeout network errors (e.g., DNS failure, invalid URL) are treated as non-retryable.
                 raise RuntimeError(f'google weather request failed for ({lat},{lon}): {exc!s}') from exc
 
             if resp.status_code in (429, 500, 502, 503, 504):
