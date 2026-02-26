@@ -77,6 +77,7 @@ export const DEFAULT_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: false,
   techEvents: false,
+  compoundRisk: false,
 };
 
 // Mobile-specific defaults for geopolitical
@@ -108,6 +109,7 @@ export const MOBILE_DEFAULT_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: false,
   techEvents: false,
+  compoundRisk: false,
 };
 
 export const VARIANT_CONFIG: VariantConfig = {

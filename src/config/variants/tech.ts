@@ -228,6 +228,7 @@ export const DEFAULT_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: true,
   techEvents: true,
+  compoundRisk: false,
 };
 
 // Mobile defaults for tech variant
@@ -259,6 +260,7 @@ export const MOBILE_DEFAULT_MAP_LAYERS: MapLayers = {
   accelerators: false,
   techHQs: false,
   techEvents: true,
+  compoundRisk: false,
 };
 
 export const VARIANT_CONFIG: VariantConfig = {

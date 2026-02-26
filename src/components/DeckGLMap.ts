@@ -7,6 +7,7 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import type { Layer, LayersList, PickingInfo } from '@deck.gl/core';
 import { GeoJsonLayer, ScatterplotLayer, PathLayer, IconLayer } from '@deck.gl/layers';
 import maplibregl from 'maplibre-gl';
+import type { FeatureCollection, Geometry, Point } from 'geojson';
 import type {
   MapLayers,
   Hotspot,
@@ -61,6 +62,7 @@ import {
 } from '@/services/hotspot-escalation';
 import { getCountryScore } from '@/services/country-instability';
 import { getAlertsNearLocation } from '@/services/geo-convergence';
+import { fetchCompoundAlerts, fetchCompoundHazards, type CompoundAlertProperties } from '@/services/compound-risk';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
 export type DeckMapView = 'global' | 'america' | 'mena' | 'eu' | 'asia' | 'latam' | 'africa' | 'oceania';
@@ -75,6 +77,15 @@ interface DeckMapState {
 
 interface HotspotWithBreaking extends Hotspot {
   hasBreaking?: boolean;
+}
+
+
+interface CompoundAlertItem {
+  id: string;
+  lon: number;
+  lat: number;
+  score: number;
+  properties: CompoundAlertProperties;
 }
 
 interface TechEventMarker {
@@ -186,6 +197,15 @@ export class DeckGLMap {
   private newsLocationFirstSeen = new Map<string, number>(); // title → timestamp
   private newsPulseTimer: ReturnType<typeof setInterval> | null = null;
 
+  private compoundHazards: FeatureCollection<Geometry, CompoundAlertProperties> | null = null;
+  private compoundAlerts: CompoundAlertItem[] = [];
+  private compoundTimestep = 0;
+  private compoundLoading = false;
+  private compoundError: string | null = null;
+  private selectedCompoundAlert: CompoundAlertItem | null = null;
+  private _compoundRiskRequestId = 0;
+
+
   // Country highlight state
   private countryGeoJsonLoaded = false;
 
@@ -239,8 +259,12 @@ export class DeckGLMap {
     this.createControls();
     this.createTimeSlider();
     this.createLayerToggles();
+    this.createCompoundControls();
     this.createLegend();
     this.createTimestamp();
+    if (this.state.layers.compoundRisk) {
+      void this.loadCompoundRiskData();
+    }
   }
 
   // Cluster overlay container
@@ -826,6 +850,14 @@ export class DeckGLMap {
       layers.push(this.createOutagesLayer());
     }
 
+    // Compound risk layers
+    if (mapLayers.compoundRisk && this.compoundHazards) {
+      layers.push(this.createCompoundHazardsLayer());
+    }
+    if (mapLayers.compoundRisk && this.compoundAlerts.length > 0) {
+      layers.push(this.createCompoundAlertsLayer());
+    }
+
     // AIS density layer
     if (mapLayers.ais && this.aisDensity.length > 0) {
       layers.push(this.createAisDensityLayer());
@@ -1270,6 +1302,36 @@ export class DeckGLMap {
     });
   }
 
+
+  private createCompoundHazardsLayer(): GeoJsonLayer {
+    return new GeoJsonLayer({
+      id: 'compound-hazards-layer',
+      data: this.compoundHazards ?? undefined,
+      stroked: true,
+      filled: true,
+      getFillColor: [255, 140, 0, 70],
+      getLineColor: [255, 180, 0, 180],
+      lineWidthMinPixels: 1,
+      pickable: true,
+    });
+  }
+
+  private createCompoundAlertsLayer(): ScatterplotLayer<CompoundAlertItem> {
+    return new ScatterplotLayer({
+      id: 'compound-alerts-layer',
+      data: this.compoundAlerts,
+      getPosition: (d) => [d.lon, d.lat],
+      getRadius: (d) => 9000 + Math.max(0, d.score) * 900,
+      getFillColor: [255, 80, 80, 210],
+      getLineColor: [255, 220, 220, 255],
+      lineWidthMinPixels: 1,
+      radiusMinPixels: 6,
+      radiusMaxPixels: 24,
+      pickable: true,
+      stroked: true,
+    });
+  }
+
   private createOutagesLayer(): ScatterplotLayer {
     return new ScatterplotLayer({
       id: 'outages-layer',
@@ -1689,6 +1751,10 @@ export class DeckGLMap {
       return { html: `<div class="deckgl-tooltip"><strong>${obj.asn || 'Internet Outage'}</strong><br/>${obj.country || ''}</div>` };
     }
 
+    if (layerId === 'compound-alerts-layer') {
+      return { html: `<div class="deckgl-tooltip"><strong>${escapeHtml(obj.properties?.title || obj.properties?.name || 'Compound Alert')}</strong><br/>Score: ${(obj.score ?? 0).toFixed(2)}</div>` };
+    }
+
     if (layerId === 'ais-density-layer') {
       return { html: `<div class="deckgl-tooltip"><strong>Ship Traffic</strong><br/>Intensity: ${obj.intensity || ''}</div>` };
     }
@@ -1763,6 +1829,11 @@ export class DeckGLMap {
       return { html: `<div class="deckgl-tooltip"><strong>${obj.name || 'Repair Ship'}</strong><br/>${obj.status || ''}</div>` };
     }
 
+    if (layerId === 'compound-hazards-layer') {
+      const props = obj.properties || obj;
+      return { html: `<div class="deckgl-tooltip"><strong>${escapeHtml(props.name || 'Hazard Zone')}</strong></div>` };
+    }
+
     return null;
   }
 
@@ -1791,6 +1862,14 @@ export class DeckGLMap {
       });
       this.popup.loadHotspotGdeltContext(hotspot);
       this.onHotspotClick?.(hotspot);
+      return;
+    }
+
+    if (layerId === 'compound-alerts-layer') {
+      const alert = info.object as CompoundAlertItem;
+      this.selectedCompoundAlert = alert;
+      this.setCompoundDetail(alert);
+      this.setCenter(alert.lat, alert.lon, Math.max(this.maplibreMap?.getZoom() || 4, 4));
       return;
     }
 
@@ -1966,6 +2045,7 @@ export class DeckGLMap {
           { key: 'flights', label: 'Flight Delays', icon: '&#9992;' },
           { key: 'protests', label: 'Protests', icon: '&#128226;' },
           { key: 'weather', label: 'Weather Alerts', icon: '&#9928;' },
+          { key: 'compoundRisk', label: 'Compound Risk', icon: '&#128680;' },
           { key: 'outages', label: 'Internet Outages', icon: '&#128225;' },
           { key: 'natural', label: 'Natural Events', icon: '&#127755;' },
           { key: 'fires', label: 'Fires', icon: '&#128293;' },
@@ -1998,9 +2078,13 @@ export class DeckGLMap {
       input.addEventListener('change', () => {
         const layer = (input as HTMLInputElement).closest('.layer-toggle')?.getAttribute('data-layer') as keyof MapLayers;
         if (layer) {
-          this.state.layers[layer] = (input as HTMLInputElement).checked;
+          const enabled = (input as HTMLInputElement).checked;
+          this.state.layers[layer] = enabled;
+          if (layer === 'compoundRisk') {
+            this.updateCompoundUiVisibility();
+          }
           this.render();
-          this.onLayerChange?.(layer, (input as HTMLInputElement).checked);
+          this.onLayerChange?.(layer, enabled);
         }
       });
     });
@@ -2016,6 +2100,181 @@ export class DeckGLMap {
       toggleList?.classList.toggle('collapsed');
       if (collapseBtn) collapseBtn.innerHTML = toggleList?.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
     });
+  }
+
+
+  private createCompoundControls(): void {
+    const panel = document.createElement('div');
+    panel.className = 'compound-risk-panel';
+    panel.innerHTML = `
+      <div class="compound-risk-header">Compound Risk</div>
+      <label class="compound-risk-slider-label" for="compound-risk-timestep">Timestep: <span class="compound-risk-step">0</span></label>
+      <input id="compound-risk-timestep" class="compound-risk-slider" type="range" min="0" max="2" step="1" value="0" />
+      <div class="compound-risk-status"></div>
+      <div class="compound-alerts-drawer"></div>
+      <div class="compound-alert-detail">Select an alert for details.</div>
+    `;
+    this.container.appendChild(panel);
+
+    const slider = panel.querySelector('.compound-risk-slider') as HTMLInputElement | null;
+    slider?.addEventListener('input', () => {
+      const next = Number(slider.value);
+      this.compoundTimestep = next;
+      const stepEl = panel.querySelector('.compound-risk-step');
+      if (stepEl) stepEl.textContent = String(next);
+      if (this.state.layers.compoundRisk) {
+        // Increment requestId so any in-flight request is treated as stale
+        this._compoundRiskRequestId++;
+        void this.loadCompoundRiskData();
+      }
+    });
+
+    this.updateCompoundUiVisibility();
+  }
+
+  private updateCompoundUiVisibility(): void {
+    const panel = this.container.querySelector('.compound-risk-panel') as HTMLElement | null;
+    if (!panel) return;
+    panel.style.display = this.state.layers.compoundRisk ? 'block' : 'none';
+  }
+
+  private setCompoundStatus(message: string, type: 'loading' | 'error' | 'idle' = 'idle'): void {
+    const el = this.container.querySelector('.compound-risk-status') as HTMLElement | null;
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle('is-loading', type === 'loading');
+    el.classList.toggle('is-error', type === 'error');
+  }
+
+  private setCompoundDetail(alert: CompoundAlertItem | null): void {
+    const detail = this.container.querySelector('.compound-alert-detail') as HTMLElement | null;
+    if (!detail) return;
+    if (!alert) {
+      detail.textContent = 'Select an alert for details.';
+      return;
+    }
+    const p = alert.properties;
+    const title = escapeHtml(String(p.title || p.name || 'Alert'));
+    const summary = p.summary ? escapeHtml(String(p.summary)) : '';
+    const explanationOrDriver = p.explanation || p.driver ? escapeHtml(String(p.explanation || p.driver)) : '';
+    const impact = p.impact ? escapeHtml(String(p.impact)) : '';
+    const recommendation = p.recommendation ? escapeHtml(String(p.recommendation)) : '';
+
+    const sections: string[] = [];
+    sections.push(`<div><strong>${title}</strong></div>`);
+    sections.push(`<div>Score: ${alert.score.toFixed(2)}</div>`);
+    if (summary) {
+      sections.push(`<div>${summary}</div>`);
+    }
+    if (explanationOrDriver) {
+      sections.push(`<div><small>${explanationOrDriver}</small></div>`);
+    }
+    if (impact) {
+      sections.push(`<div><small>${impact}</small></div>`);
+    }
+    if (recommendation) {
+      sections.push(`<div><small>${recommendation}</small></div>`);
+    }
+
+    detail.innerHTML = sections.join('');
+  }
+
+  private renderCompoundDrawer(): void {
+    const drawer = this.container.querySelector('.compound-alerts-drawer') as HTMLElement | null;
+    if (!drawer) return;
+
+    // Attach a single delegated click handler once to avoid per-item listeners
+    const anyDrawer = drawer as HTMLElement & { _compoundClickHandlerAttached?: boolean };
+    if (!anyDrawer._compoundClickHandlerAttached) {
+      drawer.addEventListener('click', (event: MouseEvent) => {
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        const item = target.closest('.compound-alert-item') as HTMLElement | null;
+        if (!item) return;
+
+        const id = item.dataset.alertId;
+        const alert = this.compoundAlerts.find((a) => a.id === id) || null;
+        if (!alert) return;
+
+        this.selectedCompoundAlert = alert;
+        this.setCompoundDetail(alert);
+        this.setCenter(alert.lat, alert.lon, Math.max(this.maplibreMap?.getZoom() || 4, 4));
+        // Update selected visual state
+        drawer.querySelectorAll('.compound-alert-item').forEach(el => el.classList.remove('selected'));
+        item.classList.add('selected');
+      });
+      anyDrawer._compoundClickHandlerAttached = true;
+    }
+
+    drawer.innerHTML = this.compoundAlerts
+      .map(
+        (alert) =>
+          `<button class="compound-alert-item${this.selectedCompoundAlert?.id === alert.id ? ' selected' : ''}" data-alert-id="${escapeHtml(alert.id)}">${escapeHtml(
+            String(alert.properties.title || alert.properties.name || 'Alert'),
+          )}<span>${alert.score.toFixed(2)}</span></button>`,
+      )
+      .join('');
+  }
+
+  public async loadCompoundRiskData(): Promise<void> {
+    const reqId = ++this._compoundRiskRequestId;
+    this.compoundLoading = true;
+    this.compoundError = null;
+    this.setCompoundStatus('Loading compound risk…', 'loading');
+
+    try {
+      const [hazards, alerts] = await Promise.all([
+        fetchCompoundHazards(this.compoundTimestep),
+        fetchCompoundAlerts(this.compoundTimestep),
+      ]);
+
+      // Discard stale responses from previous slider positions
+      if (reqId !== this._compoundRiskRequestId) return;
+
+      this.compoundHazards = hazards;
+
+      const mapped = alerts.features
+        .map((feature, idx) => {
+          if (feature.geometry?.type !== 'Point') return null;
+          const coords = (feature.geometry as Point).coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) return null;
+          const lon = Number(coords[0]);
+          const lat = Number(coords[1]);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+          const props = feature.properties || {};
+          const score = Number(props.score ?? 0);
+          return {
+            id: String(props.id || `compound-${idx}`),
+            lon,
+            lat,
+            score: Number.isFinite(score) ? score : 0,
+            properties: props,
+          } as CompoundAlertItem;
+        })
+        .filter((x): x is CompoundAlertItem => !!x)
+        .sort((a, b) => b.score - a.score);
+
+      this.compoundAlerts = mapped;
+      this.selectedCompoundAlert = mapped[0] || null;
+      this.setCompoundDetail(this.selectedCompoundAlert);
+      this.renderCompoundDrawer();
+      this.setCompoundStatus(mapped.length ? `Loaded ${mapped.length} alerts.` : 'No alerts returned.');
+      this.setLayerReady('compoundRisk', mapped.length > 0);
+      this.render();
+    } catch (error) {
+      if (reqId !== this._compoundRiskRequestId) return;
+      this.compoundError = error instanceof Error ? error.message : 'Failed to load compound risk data';
+      this.compoundHazards = null;
+      this.compoundAlerts = [];
+      this.renderCompoundDrawer();
+      this.setCompoundDetail(null);
+      this.setCompoundStatus(this.compoundError, 'error');
+      this.render();
+    } finally {
+      if (reqId === this._compoundRiskRequestId) {
+        this.compoundLoading = false;
+      }
+    }
   }
 
   /** Show layer help popup explaining each layer */
@@ -2276,7 +2535,28 @@ export class DeckGLMap {
   }
 
   public setLayers(layers: MapLayers): void {
+    // Capture previous state so we can detect on/off transitions for certain layers
+    const wasCompoundRiskEnabled = this.state.layers?.compoundRisk ?? false;
+
     this.state.layers = layers;
+    this.updateCompoundUiVisibility();
+
+    // If the compound risk layer has just been turned off, clear any in-flight/loading state
+    if (!layers.compoundRisk && wasCompoundRiskEnabled) {
+      this.compoundLoading = false;
+      // Clear any previously loaded compound data so UI/data state remain consistent
+      // (these fields are used elsewhere in this component when rendering compound risk)
+      // They may be undefined if compound data has never been loaded.
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore - properties are defined on the class elsewhere in this file
+      this.compoundHazards = undefined;
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore - properties are defined on the class elsewhere in this file
+      this.compoundAlerts = undefined;
+    }
+    if (layers.compoundRisk && !this.compoundHazards && !this.compoundLoading) {
+      void this.loadCompoundRiskData();
+    }
     this.render(); // Debounced
 
     // Update toggle checkboxes
@@ -2585,6 +2865,9 @@ export class DeckGLMap {
       this.state.layers[layer] = true;
       const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"] input`) as HTMLInputElement;
       if (toggle) toggle.checked = true;
+      if (layer === 'compoundRisk') {
+        this.updateCompoundUiVisibility();
+      }
       this.render();
       this.onLayerChange?.(layer, true);
     }
@@ -2596,6 +2879,9 @@ export class DeckGLMap {
     this.state.layers[layer] = !this.state.layers[layer];
     const toggle = this.container.querySelector(`.layer-toggle[data-layer="${layer}"] input`) as HTMLInputElement;
     if (toggle) toggle.checked = this.state.layers[layer];
+    if (layer === 'compoundRisk') {
+      this.updateCompoundUiVisibility();
+    }
     this.render();
     this.onLayerChange?.(layer, this.state.layers[layer]);
   }
