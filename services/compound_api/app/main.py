@@ -44,7 +44,9 @@ def _run_id_param(run_id: str | None) -> str:
     if run_id and run_id != 'latest':
         return run_id
     latest = app.state.storage.latest_run()
-    return latest['run_id'] if latest else 'latest'
+    if not latest:
+        raise HTTPException(status_code=404, detail='no hazard runs')
+    return latest['run_id']
 
 
 @app.get('/compound/health')
