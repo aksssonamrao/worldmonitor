@@ -11478,3 +11478,15 @@ body.has-critical-banner .panels-grid {
   background: rgba(143,211,255,0.15);
   border-color: rgba(143,211,255,0.5);
 }
+
+.compound-plan-btn {
+  margin-top: 8px;
+  width: 100%;
+  background: rgba(80, 220, 255, 0.2);
+  border: 1px solid rgba(80, 220, 255, 0.6);
+  color: #d7f7ff;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.compound-plan-btn:disabled { opacity: 0.7; cursor: not-allowed; }

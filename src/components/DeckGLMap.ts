@@ -63,6 +63,7 @@ import {
 import { getCountryScore } from '@/services/country-instability';
 import { getAlertsNearLocation } from '@/services/geo-convergence';
 import { fetchCompoundAlerts, fetchCompoundHazards, type CompoundAlertProperties } from '@/services/compound-risk';
+import { generatePlannerPlan, type PlannerResponse } from '@/services/planner';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
 export type DeckMapView = 'global' | 'america' | 'mena' | 'eu' | 'asia' | 'latam' | 'africa' | 'oceania';
@@ -204,6 +205,9 @@ export class DeckGLMap {
   private compoundError: string | null = null;
   private selectedCompoundAlert: CompoundAlertItem | null = null;
   private _compoundRiskRequestId = 0;
+  private plannerPlan: PlannerResponse | null = null;
+  private plannerLoading = false;
+  private plannerError: string | null = null;
 
 
   // Country highlight state
@@ -857,6 +861,9 @@ export class DeckGLMap {
     if (mapLayers.compoundRisk && this.compoundAlerts.length > 0) {
       layers.push(this.createCompoundAlertsLayer());
     }
+    if (mapLayers.compoundRisk && this.plannerPlan?.routes?.length) {
+      layers.push(this.createPlannerRoutesLayer());
+    }
 
     // AIS density layer
     if (mapLayers.ais && this.aisDensity.length > 0) {
@@ -1313,6 +1320,28 @@ export class DeckGLMap {
       getLineColor: [255, 180, 0, 180],
       lineWidthMinPixels: 1,
       pickable: true,
+    });
+  }
+
+
+  private createPlannerRoutesLayer(): GeoJsonLayer {
+    const features = (this.plannerPlan?.routes || []).map((route, idx) => ({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: route.stops.map((s) => [s.lon, s.lat]),
+      },
+      properties: { vehicle_id: route.vehicle_id, idx },
+    }));
+
+    return new GeoJsonLayer({
+      id: 'planner-routes-layer',
+      data: { type: 'FeatureCollection', features } as FeatureCollection,
+      pickable: true,
+      stroked: true,
+      filled: false,
+      getLineColor: [80, 220, 255, 230],
+      lineWidthMinPixels: 3,
     });
   }
 
@@ -2163,20 +2192,50 @@ export class DeckGLMap {
     const sections: string[] = [];
     sections.push(`<div><strong>${title}</strong></div>`);
     sections.push(`<div>Score: ${alert.score.toFixed(2)}</div>`);
-    if (summary) {
-      sections.push(`<div>${summary}</div>`);
+    if (summary) sections.push(`<div>${summary}</div>`);
+    if (explanationOrDriver) sections.push(`<div><small>${explanationOrDriver}</small></div>`);
+    if (impact) sections.push(`<div><small>${impact}</small></div>`);
+    if (recommendation) sections.push(`<div><small>${recommendation}</small></div>`);
+
+    sections.push(`<button class="compound-plan-btn" ${this.plannerLoading ? 'disabled' : ''}>${this.plannerLoading ? 'Generating…' : 'Generate Plan'}</button>`);
+    if (this.plannerError) {
+      sections.push(`<div><small>${escapeHtml(this.plannerError)}</small></div>`);
     }
-    if (explanationOrDriver) {
-      sections.push(`<div><small>${explanationOrDriver}</small></div>`);
-    }
-    if (impact) {
-      sections.push(`<div><small>${impact}</small></div>`);
-    }
-    if (recommendation) {
-      sections.push(`<div><small>${recommendation}</small></div>`);
+    if (this.plannerPlan) {
+      sections.push(`<div><strong>Plan Objective</strong></div>`);
+      sections.push(`<div>Total: ${this.plannerPlan.objective.total_cost.toFixed(2)} | Dist: ${this.plannerPlan.objective.distance_km.toFixed(2)} km | Time: ${this.plannerPlan.objective.time_min.toFixed(1)} min | Risk: ${this.plannerPlan.objective.risk_cost.toFixed(2)}</div>`);
+      this.plannerPlan.routes.forEach((route) => {
+        sections.push(`<div><strong>${escapeHtml(route.vehicle_id)}</strong> · ${route.distance_km.toFixed(2)} km · ${route.time_min.toFixed(1)} min · risk ${route.risk_cost.toFixed(2)}</div>`);
+        sections.push(`<div><small>${route.stops.map((s) => escapeHtml(`${s.type}:${s.id}`)).join(' → ')}</small></div>`);
+      });
+      if (this.plannerPlan.llm_summary) {
+        sections.push(`<div><small>${escapeHtml(this.plannerPlan.llm_summary)}</small></div>`);
+      }
     }
 
     detail.innerHTML = sections.join('');
+    const btn = detail.querySelector('.compound-plan-btn') as HTMLButtonElement | null;
+    if (btn) {
+      btn.addEventListener('click', () => {
+        void this.generatePlanForSelectedAlert();
+      });
+    }
+  }
+
+  private async generatePlanForSelectedAlert(): Promise<void> {
+    if (!this.selectedCompoundAlert) return;
+    this.plannerLoading = true;
+    this.plannerError = null;
+    this.setCompoundDetail(this.selectedCompoundAlert);
+    try {
+      this.plannerPlan = await generatePlannerPlan(this.selectedCompoundAlert.id, 'latest', this.compoundTimestep);
+      this.render();
+    } catch (error) {
+      this.plannerError = error instanceof Error ? error.message : 'Failed to generate plan';
+    } finally {
+      this.plannerLoading = false;
+      this.setCompoundDetail(this.selectedCompoundAlert);
+    }
   }
 
   private renderCompoundDrawer(): void {
