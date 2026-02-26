@@ -8,6 +8,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY fixtures ./fixtures
 
+RUN adduser --disabled-password --gecos '' planner \
+    && chown -R planner:planner /app
+
+USER planner
+
 EXPOSE 8091
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8091"]

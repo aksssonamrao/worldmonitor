@@ -43,6 +43,8 @@ const DEMO_CASE = {
   ],
 };
 
+const PLANNER_REQUEST_TIMEOUT_MS = 10_000;
+
 export async function generatePlannerPlan(alertId: string, runId: string, timestep: number): Promise<PlannerResponse> {
   if (!PLANNER_API_URL) {
     throw new Error('VITE_PLANNER_API_URL is not configured.');
@@ -57,13 +59,20 @@ export async function generatePlannerPlan(alertId: string, runId: string, timest
     risk_model: { mode: 'polygon_intersection', sample_points_per_leg: 10 },
   };
 
-  const response = await fetch(`${PLANNER_API_URL}/plan`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(`Planner request failed (${response.status})`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PLANNER_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${PLANNER_API_URL}/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Planner request failed (${response.status})`);
+    }
+    return response.json() as Promise<PlannerResponse>;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return response.json() as Promise<PlannerResponse>;
 }
