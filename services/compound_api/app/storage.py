@@ -50,9 +50,39 @@ class Storage:
         return row
 
     def insert_hazard(self, run_id: str, timestep: int, hazard_type: str, prob: float, forecast_ts: datetime, bbox: list[float], thresholds: dict[str, float], wkt: str) -> None:
-        wkt_esc = wkt.replace("'", "''")
-        self._exec(f"INSERT INTO hazards (id,run_id,timestep,forecast_ts,type,hazard_prob,provider,bbox,thresholds,generated_at,geom) VALUES (gen_random_uuid(),'{run_id}',{timestep},'{forecast_ts.isoformat()}','{hazard_type}',{prob},'google_weather','{json.dumps(bbox)}'::jsonb,'{json.dumps(thresholds)}'::jsonb,NOW(),ST_GeogFromText('{wkt_esc}'))")
+        # Validate that bbox is JSON-serializable
+        try:
+            bbox_json = json.dumps(bbox)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"bbox is not JSON-serializable: {e}") from e
 
+        # Validate that thresholds is JSON-serializable
+        try:
+            thresholds_json = json.dumps(thresholds)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"thresholds is not JSON-serializable: {e}") from e
+
+        # Basic validation for WKT input before passing to PostGIS
+        if not isinstance(wkt, str) or not wkt.strip():
+            raise ValueError("wkt must be a non-empty string")
+
+        wkt_esc = wkt.replace("'", "''")
+
+        sql = (
+            "INSERT INTO hazards "
+            "(id,run_id,timestep,forecast_ts,type,hazard_prob,provider,bbox,thresholds,generated_at,geom) "
+            f"VALUES (gen_random_uuid(),'{run_id}',{timestep},'{forecast_ts.isoformat()}',"
+            f"'{hazard_type}',{prob},'google_weather','{bbox_json}'::jsonb,'{thresholds_json}'::jsonb,"
+            f"NOW(),ST_GeogFromText('{wkt_esc}'))"
+        )
+
+        try:
+            self._exec(sql)
+        except RuntimeError as e:
+            # Add context to help identify issues such as malformed WKT or bad JSON fields
+            raise RuntimeError(
+                f"Failed to insert hazard for run_id '{run_id}', timestep {timestep}: {e}"
+            ) from e
     def list_hazards(self, run_id: str, timestep: int) -> list[dict[str, Any]]:
         out = self._exec(f"SELECT COALESCE(json_agg(row_to_json(t)),'[]'::json) FROM (SELECT type,hazard_prob,forecast_ts,provider,generated_at,ST_AsGeoJSON(geom::geometry)::json as geometry FROM hazards WHERE run_id='{run_id}' AND timestep={timestep} ORDER BY generated_at DESC) t")
         rows = json.loads(out or '[]')
