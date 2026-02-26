@@ -105,3 +105,22 @@ def test_llm_summary_null_without_key(monkeypatch):
 
     body = client.post('/plan', json=_payload()).json()
     assert body['llm_summary'] is None
+
+
+def test_plan_accepts_selected_route_geometry(monkeypatch):
+    async def fake_hazards(run_id: str, timestep: int):
+        return HAZARDS
+
+    monkeypatch.setattr('app.main._fetch_hazards', fake_hazards)
+    payload = _payload()
+    payload['selected_route_geometry'] = {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-122.3, 37.8]]}
+    body = client.post('/plan', json=payload).json()
+    assert body['selected_route_geometry']['type'] == 'LineString'
+
+
+def test_agent_brief_template():
+    resp = client.post('/agent/brief', json={'shipment': {'origin': 'SFO', 'destination': 'LAX', 'depart_time': '2026-01-01T00:00:00Z', 'arrive_by': '2026-01-01T08:00:00Z'}, 'selected_route_id': 'balanced'})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 'markdown' in body
+    assert body['citations']

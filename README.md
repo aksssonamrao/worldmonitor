@@ -1,15 +1,10 @@
-# World Monitor — Route Risk Planner
+# World Monitor — Map-first Shipment Route Risk Planner
 
-World Monitor is a self-hosted route risk planner focused on supply-chain risk signals and weather-driven hazard planning.
-
-## Scope
-
-This repository now targets a single product:
-- Route risk planning
-- Supply chain decision support
-- Compound hazard generation through Google Weather in the `services/compound_api` service
-
-Out-of-scope systems were removed from this repo, including market/crypto dashboards, prediction market modules, live video streams, browser-side ML inference, and Vercel/Railway edge-relay architecture.
+World Monitor is a self-hosted shipment planning product where the map is primary:
+- Build shipment
+- Generate 3 route options
+- Inspect route risk overlays and evidence
+- Produce deterministic plan + brief
 
 ## Run (Docker Compose)
 
@@ -20,22 +15,32 @@ docker compose up --build
 
 Services:
 - Frontend: http://localhost:3000
-- Compound API health: http://localhost:8090/compound/health
-- Planner API: http://localhost:8091/health
+- Compound API: http://localhost:8090/compound/health
+- Planner API (+ `/agent/brief`): http://localhost:8091/health
 - PostGIS: localhost:5432
 
-## Backend tests
+## Key APIs
+
+- `POST /routes/options` (compound_api): returns `Fastest/Balanced/Safest` with geometry + summary risk.
+- `POST /routes/score` (compound_api): corridor-scoped risk scoring with `segment_scores` and `top_evidence`.
+- `POST /plan` (planner): deterministic planner; accepts `selected_route_geometry`.
+- `POST /agent/brief` (planner): template markdown brief + citations (works without OpenAI key).
+
+## Tests
 
 ```bash
-pip install -r services/compound_api/requirements.txt
 pytest services/compound_api/tests
-```
-
-```bash
-pip install -r services/planner/requirements.txt
 pytest services/planner/tests
+npm run typecheck
+npm run build
 ```
 
-## Environment
+## UX architecture
 
-Use `.env.example` for the minimal self-host configuration. Keep only routing/hazard-relevant keys enabled (Google Weather + optional event sources + map configuration).
+Frontend layer system:
+- base map
+- routes layer (all 3 options)
+- selected route gradient layer (segment-scored)
+- events cluster layer
+- alerts cluster layer
+- hazards polygon layer

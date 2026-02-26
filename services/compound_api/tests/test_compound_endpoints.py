@@ -16,6 +16,7 @@ class FakeStorage:
         self.runs = []
         self.samples = {}
         self.events = []
+        self.cache = {}
 
     async def insert_run(self, run_id, bbox, timesteps):
         self.runs.append({'run_id': run_id, 'bbox': bbox, 'timesteps': timesteps, 'status': 'RUNNING', 'started_at': datetime.now(timezone.utc), 'finished_at': None, 'points_requested': 0, 'points_fetched': 0, 'cache_hits': 0, 'error': None})
@@ -118,6 +119,25 @@ class FakeStorage:
     def latest_run_sync(self):
         return self.runs[-1] if self.runs else None
 
+    async def get_route_score_cache(self, route_hash, time_bucket):
+        return self.cache.get((route_hash, time_bucket))
+
+    async def set_route_score_cache(self, route_hash, time_bucket, payload):
+        self.cache[(route_hash, time_bucket)] = payload
+
+    async def score_route_corridor(self, geometry, lookback_hours, run_id, timestep, buffer_meters=15000):
+        coords = geometry.get('coordinates', [])
+        base = 20 + len(coords) * 5
+        return {
+            'total_risk': float(base),
+            'summary_risk': {'total': float(base), 'weather': base * 0.4, 'news': base * 0.35, 'compound': base * 0.25},
+            'segment_scores': [
+                {'segment_index': i, 'score': float(base + i), 'weather': 10.0, 'news': 8.0, 'compound': 7.0, 'geometry': {'type': 'LineString', 'coordinates': [coords[i], coords[i + 1]]}}
+                for i in range(max(0, len(coords) - 1))
+            ],
+            'top_evidence': {'events': [], 'alerts': [], 'hazards': []},
+        }
+
 
 class FakeWeatherClient:
     def __init__(self):
@@ -205,3 +225,40 @@ def test_dedup_multiple_hazards_and_invalid_event_id(configured_app):
 
     ok = client.get(f'/compound/events/{event_id}')
     assert ok.status_code == 200
+
+
+def test_routes_options_and_score(configured_app):
+    app_obj, storage = configured_app
+    now = datetime.now(timezone.utc)
+    storage.runs.append({'run_id': 'run-routes', 'started_at': now})
+    client = TestClient(app_obj)
+
+    options_resp = client.post(
+        '/routes/options',
+        json={
+            'origin': {'lat': 37.78, 'lon': -122.42},
+            'destination': {'lat': 34.05, 'lon': -118.24},
+            'depart_time': now.isoformat(),
+            'arrive_by': (now + timedelta(hours=10)).isoformat(),
+            'risk_appetite': 0.5,
+        },
+    )
+    assert options_resp.status_code == 200
+    routes = options_resp.json()['routes']
+    assert len(routes) == 3
+    assert {route['name'] for route in routes} == {'Fastest', 'Balanced', 'Safest'}
+
+    score_resp = client.post(
+        '/routes/score',
+        json={
+            'geometry': routes[0]['geometry'],
+            'depart_time': now.isoformat(),
+            'arrive_by': (now + timedelta(hours=10)).isoformat(),
+            'run_id': 'latest',
+            'timestep': 0,
+        },
+    )
+    assert score_resp.status_code == 200
+    score = score_resp.json()
+    assert score['segment_scores']
+    assert 'top_evidence' in score
