@@ -616,3 +616,21 @@ MIT License — see [LICENSE](LICENSE) for details.
   <a href="https://worldmonitor.app">worldmonitor.app</a> &nbsp;·&nbsp;
   <a href="https://tech.worldmonitor.app">tech.worldmonitor.app</a>
 </p>
+
+## Google Weather Hazard Generation (Production Path)
+
+Compound API now uses Google Maps Platform Weather API as the only hazard provider (`google_weather`).
+
+1. Set `GOOGLE_WEATHER_API_KEY` in `.env.local` / compose env.
+2. Start stack: `docker compose up --build`.
+3. In the UI, enable **Compound Risk** and click **Refresh Hazards** to generate hazards for current map viewport.
+
+Recommended bbox: keep map zoomed to regional scope; requests with area larger than `MAX_BBOX_AREA_DEG2` are rejected.
+
+### Quota/cost safety
+- Client-side rate limiting (`MAX_QPS`, default 5).
+- Retry with backoff on 429/5xx.
+- Forecast sample cache (`weather_samples`) with TTL (`HAZARD_CACHE_TTL_MIN`).
+- Grid point cap (`HAZARD_MAX_POINTS`) with auto-spacing increase.
+
+If API key is missing, compound-api fails fast (or reports misconfigured in health mode) and does not generate synthetic fallback hazards.

@@ -62,7 +62,7 @@ import {
 } from '@/services/hotspot-escalation';
 import { getCountryScore } from '@/services/country-instability';
 import { getAlertsNearLocation } from '@/services/geo-convergence';
-import { fetchCompoundAlerts, fetchCompoundHazards, type CompoundAlertProperties } from '@/services/compound-risk';
+import { fetchCompoundAlerts, fetchCompoundHazards, refreshCompoundHazards, type CompoundAlertProperties } from '@/services/compound-risk';
 import { generatePlannerPlan, type PlannerResponse } from '@/services/planner';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
@@ -2138,7 +2138,9 @@ export class DeckGLMap {
     panel.innerHTML = `
       <div class="compound-risk-header">Compound Risk</div>
       <label class="compound-risk-slider-label" for="compound-risk-timestep">Timestep: <span class="compound-risk-step">0</span></label>
-      <input id="compound-risk-timestep" class="compound-risk-slider" type="range" min="0" max="2" step="1" value="0" />
+      <input id="compound-risk-timestep" class="compound-risk-slider" type="range" min="0" max="24" step="6" value="0" />
+      <button class="compound-risk-refresh">Refresh Hazards</button>
+      <div class="compound-risk-provider">Hazards updated: never, provider: Google Weather</div>
       <div class="compound-risk-status"></div>
       <div class="compound-alerts-drawer"></div>
       <div class="compound-alert-detail">Select an alert for details.</div>
@@ -2155,6 +2157,23 @@ export class DeckGLMap {
         // Increment requestId so any in-flight request is treated as stale
         this._compoundRiskRequestId++;
         void this.loadCompoundRiskData();
+      }
+    });
+
+    const refreshBtn = panel.querySelector('.compound-risk-refresh') as HTMLButtonElement | null;
+    refreshBtn?.addEventListener('click', async () => {
+      try {
+        this.setCompoundStatus('Refreshing hazards from Google Weather…', 'loading');
+        const bounds = this.maplibreMap?.getBounds();
+        const bbox: [number, number, number, number] = bounds
+          ? [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
+          : [-122.6, 37.6, -122.3, 37.9];
+        await refreshCompoundHazards(bbox);
+        const providerEl = panel.querySelector('.compound-risk-provider') as HTMLElement | null;
+        if (providerEl) providerEl.textContent = `Hazards updated: ${new Date().toISOString()}, provider: Google Weather`;
+        await this.loadCompoundRiskData();
+      } catch (error) {
+        this.setCompoundStatus(error instanceof Error ? error.message : 'Refresh failed', 'error');
       }
     });
 

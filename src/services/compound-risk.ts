@@ -15,32 +15,20 @@ export interface CompoundAlertProperties {
 
 const COMPOUND_API_URL = import.meta.env.VITE_COMPOUND_API_URL as string | undefined;
 
-async function fetchGeoJson(path: string, timestep: number): Promise<FeatureCollection<Geometry, CompoundAlertProperties>> {
-  if (!COMPOUND_API_URL) {
-    throw new Error(
-      'VITE_COMPOUND_API_URL is not configured. Please set the VITE_COMPOUND_API_URL environment variable (e.g., in your .env file or deployment configuration) before building or running this application.'
-    );
-  }
-
-  const ts = Math.max(0, Math.min(2, Math.floor(timestep)));
-  const url = `${COMPOUND_API_URL}${path}?timestep=${ts}`;
-
+async function call(path: string, init?: RequestInit): Promise<Response> {
+  if (!COMPOUND_API_URL) throw new Error('VITE_COMPOUND_API_URL is not configured.');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-  let response: Response;
+  const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    response = await fetch(url, { signal: controller.signal });
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`Compound API request timed out after 5 seconds`);
-    }
-    throw err;
+    return await fetch(`${COMPOUND_API_URL}${path}`, { ...init, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) {
-    throw new Error(`Compound API request failed: ${response.status}`);
-  }
+}
+
+async function fetchGeoJson(path: string, timestep: number): Promise<FeatureCollection<Geometry, CompoundAlertProperties>> {
+  const response = await call(`${path}?run_id=latest&timestep=${Math.max(0, Math.floor(timestep))}`);
+  if (!response.ok) throw new Error(`Compound API request failed: ${response.status}`);
   return response.json();
 }
 
@@ -50,4 +38,13 @@ export function fetchCompoundHazards(timestep: number) {
 
 export function fetchCompoundAlerts(timestep: number) {
   return fetchGeoJson('/compound/alerts', timestep);
+}
+
+export async function refreshCompoundHazards(bbox: [number, number, number, number]) {
+  const response = await call('/compound/hazards/generate', {
+    method: 'POST',
+    body: JSON.stringify({ run_id: 'latest', bbox, timestep_hours: [0, 6, 12, 24], hazard_types: ['WIND', 'RAIN', 'HEAT'] }),
+  });
+  if (!response.ok) throw new Error(`Hazard generation failed: ${response.status}`);
+  return response.json();
 }
