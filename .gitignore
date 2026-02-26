@@ -9,3 +9,7 @@ dist/
 .claude/
 .cursor/
 .env.vercel-backup
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
