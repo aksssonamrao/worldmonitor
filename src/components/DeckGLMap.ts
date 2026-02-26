@@ -1830,7 +1830,7 @@ export class DeckGLMap {
 
     if (layerId === 'compound-hazards-layer') {
       const props = obj.properties || obj;
-      return { html: `<div class="deckgl-tooltip"><strong>${props.name || 'Hazard Zone'}</strong></div>` };
+      return { html: `<div class="deckgl-tooltip"><strong>${escapeHtml(props.name || 'Hazard Zone')}</strong></div>` };
     }
 
     return null;
