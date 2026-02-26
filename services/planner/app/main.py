@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import uuid
@@ -9,9 +10,11 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 app = FastAPI(title='Planner API')
+
+logger = logging.getLogger(__name__)
 
 # Configure CORS allowlist from environment variable, e.g.:
 # PLANNER_CORS_ORIGINS="https://frontend.example.com,http://localhost:3000"
@@ -44,6 +47,9 @@ class JobIn(BaseModel):
     lon: float
     demand: int = Field(ge=0)
     service_time_min: int = Field(ge=0)
+    time_window: tuple[int, int] | None = Field(
+        default=None, description='Optional [start, end] time window in minutes from route start'
+    )
 
 
 class ObjectiveWeightsIn(BaseModel):
@@ -61,11 +67,19 @@ class PlanRequest(BaseModel):
     run_id: str = 'latest'
     timestep: int = Field(ge=0)
     alert_id: str
-    vehicles: list[VehicleIn]
-    depots: list[DepotIn]
-    jobs: list[JobIn]
+    vehicles: list[VehicleIn] = Field(min_length=1)
+    depots: list[DepotIn] = Field(min_length=1)
+    jobs: list[JobIn] = Field(min_length=1)
     objective_weights: ObjectiveWeightsIn = ObjectiveWeightsIn()
     risk_model: RiskModelIn = RiskModelIn()
+
+    @model_validator(mode='after')
+    def _check_depot_refs(self) -> 'PlanRequest':
+        depot_ids = {d.id for d in self.depots}
+        for v in self.vehicles:
+            if v.start_depot_id not in depot_ids:
+                raise ValueError(f"Vehicle '{v.id}' references unknown depot '{v.start_depot_id}'")
+        return self
 
 
 @app.get('/health')
@@ -100,11 +114,15 @@ def _point_in_polygon(lon: float, lat: float, polygon: list[list[float]]) -> boo
 async def _fetch_hazards(run_id: str, timestep: int) -> list[dict[str, Any]]:
     compound_url = os.getenv('VITE_COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/')
     url = f'{compound_url}/compound/hazards?run_id={run_id}&timestep={timestep}'
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
-    return data.get('features', [])
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get('features', [])
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError) as exc:
+        logger.exception('Failed to fetch hazards from %s: %s', url, exc)
+        return []
 
 
 def _compute_leg_risk(
@@ -136,7 +154,7 @@ def _compute_leg_risk(
     return risk
 
 
-def _llm_summary(plan: dict[str, Any], request: PlanRequest) -> str | None:
+async def _llm_summary(plan: dict[str, Any], request: PlanRequest) -> str | None:
     api_key = os.getenv('OPENAI_API_KEY', '').strip()
     model = os.getenv('OPENAI_MODEL', '').strip() or 'gpt-4o-mini'
     if not api_key:
@@ -162,8 +180,8 @@ def _llm_summary(plan: dict[str, Any], request: PlanRequest) -> str | None:
             ],
             'temperature': 0,
         }
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
                 'https://api.openai.com/v1/chat/completions',
                 headers={'Authorization': f'Bearer {api_key}'},
                 json=payload,
@@ -203,9 +221,13 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
 
     starts: list[int] = []
     ends: list[int] = []
+    depot_node_map = {n['id']: i for i, n in enumerate(nodes[:depot_count])}
     for v in vehicles:
-        starts.append(next(i for i, n in enumerate(nodes[:depot_count]) if n['id'] == v.start_depot_id))
-        ends.append(starts[-1])
+        depot_idx = depot_node_map.get(v.start_depot_id)
+        if depot_idx is None:
+            raise ValueError(f"Depot '{v.start_depot_id}' not found for vehicle '{v.id}'")
+        starts.append(depot_idx)
+        ends.append(depot_idx)
 
     manager = pywrapcp.RoutingIndexManager(node_count, len(vehicles), starts, ends)
     routing = pywrapcp.RoutingModel(manager)
@@ -261,6 +283,13 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
     for v_idx, v in enumerate(vehicles):
         end_index = routing.End(v_idx)
         time_dim.CumulVar(end_index).SetRange(0, v.max_route_time_min)
+
+    for j_idx, job in enumerate(jobs):
+        if job.time_window is not None:
+            node_index = depot_count + j_idx
+            routing_index = manager.NodeToIndex(node_index)
+            start, end = job.time_window
+            time_dim.CumulVar(routing_index).SetRange(start, end)
 
     # Do not add disjunctions with penalties here: making all jobs optional
     # would allow the solver to drop visits while the API reports that all
@@ -353,5 +382,5 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
         },
         'llm_summary': None,
     }
-    plan_result['llm_summary'] = _llm_summary(plan_result, request)
+    plan_result['llm_summary'] = await _llm_summary(plan_result, request)
     return plan_result

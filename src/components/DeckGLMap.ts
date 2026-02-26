@@ -63,7 +63,7 @@ import {
 import { getCountryScore } from '@/services/country-instability';
 import { getAlertsNearLocation } from '@/services/geo-convergence';
 import { fetchCompoundAlerts, fetchCompoundHazards, type CompoundAlertProperties } from '@/services/compound-risk';
-import { generatePlannerPlan, type PlannerResponse } from '@/services/planner';
+import { generatePlannerPlan, type PlannerResponse, type PlannerStop } from '@/services/planner';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
 export type DeckMapView = 'global' | 'america' | 'mena' | 'eu' | 'asia' | 'latam' | 'africa' | 'oceania';
@@ -1325,14 +1325,19 @@ export class DeckGLMap {
 
 
   private createPlannerRoutesLayer(): GeoJsonLayer {
-    const features = (this.plannerPlan?.routes || []).map((route, idx) => ({
-      type: 'Feature',
-      geometry: {
-        type: 'LineString',
-        coordinates: route.stops.map((s) => [s.lon, s.lat]),
-      },
-      properties: { vehicle_id: route.vehicle_id, idx },
-    }));
+    const isValidCoordinate = (s: PlannerStop) =>
+      typeof s.lon === 'number' && !isNaN(s.lon) && typeof s.lat === 'number' && !isNaN(s.lat);
+    const features = (this.plannerPlan?.routes || []).flatMap((route, idx) => {
+      const coordinates = route.stops.filter(isValidCoordinate).map((s) => [s.lon, s.lat]);
+      if (coordinates.length < 2) return [];
+      return [
+        {
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates },
+          properties: { vehicle_id: route.vehicle_id, idx },
+        },
+      ];
+    });
 
     return new GeoJsonLayer({
       id: 'planner-routes-layer',
@@ -2224,17 +2229,26 @@ export class DeckGLMap {
 
   private async generatePlanForSelectedAlert(): Promise<void> {
     if (!this.selectedCompoundAlert) return;
+    const requestAlertId = this.selectedCompoundAlert.id;
+    const requestTimestep = this.compoundTimestep;
     this.plannerLoading = true;
     this.plannerError = null;
     this.setCompoundDetail(this.selectedCompoundAlert);
     try {
-      this.plannerPlan = await generatePlannerPlan(this.selectedCompoundAlert.id, 'latest', this.compoundTimestep);
-      this.render();
+      const result = await generatePlannerPlan(requestAlertId, 'latest', requestTimestep);
+      if (this.selectedCompoundAlert?.id === requestAlertId && this.compoundTimestep === requestTimestep) {
+        this.plannerPlan = result;
+        this.render();
+      }
     } catch (error) {
-      this.plannerError = error instanceof Error ? error.message : 'Failed to generate plan';
+      if (this.selectedCompoundAlert?.id === requestAlertId && this.compoundTimestep === requestTimestep) {
+        this.plannerError = error instanceof Error ? error.message : 'Failed to generate plan';
+      }
     } finally {
-      this.plannerLoading = false;
-      this.setCompoundDetail(this.selectedCompoundAlert);
+      if (this.selectedCompoundAlert?.id === requestAlertId && this.compoundTimestep === requestTimestep) {
+        this.plannerLoading = false;
+        this.setCompoundDetail(this.selectedCompoundAlert);
+      }
     }
   }
 

@@ -14,7 +14,7 @@ def test_hazards_endpoint_returns_geojson_feature_collection() -> None:
 
     assert payload['type'] == 'FeatureCollection'
     assert isinstance(payload['features'], list)
-    assert len(payload['features']) == 2
+    assert len(payload['features']) == 3
 
     first = payload['features'][0]
     assert first['type'] == 'Feature'
