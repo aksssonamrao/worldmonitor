@@ -7,12 +7,24 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from pydantic import BaseModel, Field
 
 app = FastAPI(title='Planner API')
 
-
+# Configure CORS allowlist from environment variable, e.g.:
+# PLANNER_CORS_ORIGINS="https://frontend.example.com,http://localhost:3000"
+_cors_origins_env = os.getenv("PLANNER_CORS_ORIGINS", "")
+_allowed_origins = [origin.strip() for origin in _cors_origins_env.split(",") if origin.strip()]
+if _allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 class VehicleIn(BaseModel):
     id: str
     start_depot_id: str
