@@ -603,7 +603,7 @@ class Storage:
             result = await conn.execute('DELETE FROM aois WHERE id = $1::uuid', aoi_id)
         return result.endswith('1')
 
-    async def create_aoi_snapshot(self, aoi_id: str, run_id: str, timestep: int = 0) -> dict[str, Any]:
+    async def create_aoi_snapshot(self, aoi_id: str, run_id: str, timestep: int = 0, event_lookback_hours: int = 168) -> dict[str, Any]:
         async with self._pool.acquire() as conn:
             aoi = await conn.fetchrow('SELECT id, geom FROM aois WHERE id = $1::uuid', aoi_id)
             if not aoi:
@@ -613,11 +613,12 @@ class Storage:
                 """
                 SELECT e.id, e.title, e.event_type, e.severity, e.confidence, e.occurred_at
                 FROM events e
-                WHERE e.occurred_at >= NOW() - make_interval(hours => 168)
+                WHERE e.occurred_at >= NOW() - make_interval(hours => $2)
                   AND ST_Intersects(e.geom, $1)
                 ORDER BY e.occurred_at DESC
                 """,
                 aoi['geom'],
+                event_lookback_hours,
             )
             hazard_rows = await conn.fetch(
                 """
@@ -678,57 +679,58 @@ class Storage:
                 'risk_score': round(min(100.0, (hazard_score * 25.0) + (len(alert_rows) * 2.0)), 3),
             }
             digest = hashlib.sha256(json.dumps(summary_json, sort_keys=True).encode('utf-8')).hexdigest()
-            new_snapshot = await conn.fetchrow(
-                """
-                INSERT INTO aoi_snapshots (aoi_id, run_id, timestep, captured_at, summary_json, hash)
-                VALUES ($1::uuid, $2, $3, NOW(), $4::jsonb, $5)
-                RETURNING id, aoi_id, run_id, timestep, captured_at, summary_json, hash
-                """,
-                aoi_id,
-                run_id,
-                timestep,
-                json.dumps(summary_json),
-                digest,
-            )
-
-            prev = await conn.fetchrow(
-                """
-                SELECT id, summary_json
-                FROM aoi_snapshots
-                WHERE aoi_id = $1::uuid AND id != $2::uuid
-                ORDER BY captured_at DESC
-                LIMIT 1
-                """,
-                aoi_id,
-                new_snapshot['id'],
-            )
-
-            if prev:
-                prev_summary = prev['summary_json']
-                prev_events = {item['id'] for item in prev_summary.get('top_events', [])}
-                curr_events = {item['id'] for item in summary_json.get('top_events', [])}
-                prev_alerts = {item['id'] for item in prev_summary.get('top_compound_alerts', [])}
-                curr_alerts = {item['id'] for item in summary_json.get('top_compound_alerts', [])}
-                prev_count = sum((prev_summary.get('event_counts_by_type') or {}).values())
-                curr_count = sum(event_counts.values())
-                delta_json = {
-                    'new_events': sorted(curr_events - prev_events),
-                    'resolved_events': sorted(prev_events - curr_events),
-                    'event_count_change': curr_count - prev_count,
-                    'risk_change': round(summary_json['risk_score'] - float(prev_summary.get('risk_score', 0.0)), 3),
-                    'new_alerts': sorted(curr_alerts - prev_alerts),
-                    'resolved_alerts': sorted(prev_alerts - curr_alerts),
-                }
-                await conn.execute(
+            async with conn.transaction():
+                new_snapshot = await conn.fetchrow(
                     """
-                    INSERT INTO aoi_deltas (aoi_id, from_snapshot_id, to_snapshot_id, delta_json)
-                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4::jsonb)
+                    INSERT INTO aoi_snapshots (aoi_id, run_id, timestep, captured_at, summary_json, hash)
+                    VALUES ($1::uuid, $2, $3, NOW(), $4::jsonb, $5)
+                    RETURNING id, aoi_id, run_id, timestep, captured_at, summary_json, hash
                     """,
                     aoi_id,
-                    prev['id'],
-                    new_snapshot['id'],
-                    json.dumps(delta_json),
+                    run_id,
+                    timestep,
+                    json.dumps(summary_json),
+                    digest,
                 )
+
+                prev = await conn.fetchrow(
+                    """
+                    SELECT id, summary_json
+                    FROM aoi_snapshots
+                    WHERE aoi_id = $1::uuid AND id != $2::uuid
+                    ORDER BY captured_at DESC
+                    LIMIT 1
+                    """,
+                    aoi_id,
+                    new_snapshot['id'],
+                )
+
+                if prev:
+                    prev_summary = prev['summary_json']
+                    prev_events = {item['id'] for item in prev_summary.get('top_events', [])}
+                    curr_events = {item['id'] for item in summary_json.get('top_events', [])}
+                    prev_alerts = {item['id'] for item in prev_summary.get('top_compound_alerts', [])}
+                    curr_alerts = {item['id'] for item in summary_json.get('top_compound_alerts', [])}
+                    prev_count = sum((prev_summary.get('event_counts_by_type') or {}).values())
+                    curr_count = sum(event_counts.values())
+                    delta_json = {
+                        'new_events': sorted(curr_events - prev_events),
+                        'resolved_events': sorted(prev_events - curr_events),
+                        'event_count_change': curr_count - prev_count,
+                        'risk_change': round(summary_json['risk_score'] - float(prev_summary.get('risk_score', 0.0)), 3),
+                        'new_alerts': sorted(curr_alerts - prev_alerts),
+                        'resolved_alerts': sorted(prev_alerts - curr_alerts),
+                    }
+                    await conn.execute(
+                        """
+                        INSERT INTO aoi_deltas (aoi_id, from_snapshot_id, to_snapshot_id, delta_json)
+                        VALUES ($1::uuid, $2::uuid, $3::uuid, $4::jsonb)
+                        """,
+                        aoi_id,
+                        prev['id'],
+                        new_snapshot['id'],
+                        json.dumps(delta_json),
+                    )
 
         return dict(new_snapshot)
 
@@ -766,12 +768,19 @@ class Storage:
             )
         return output
 
-    async def refresh_all_aoi_snapshots(self, run_id: str, timestep: int = 0) -> list[dict[str, Any]]:
+    async def refresh_all_aoi_snapshots(self, run_id: str, timestep: int = 0, event_lookback_hours: int = 168) -> list[dict[str, Any]]:
         aois = await self.list_aois()
         snapshots: list[dict[str, Any]] = []
         for aoi in aois:
             try:
-                snapshots.append(await self.create_aoi_snapshot(str(aoi['id']), run_id=run_id, timestep=timestep))
+                snapshots.append(
+                    await self.create_aoi_snapshot(
+                        str(aoi['id']),
+                        run_id=run_id,
+                        timestep=timestep,
+                        event_lookback_hours=event_lookback_hours,
+                    )
+                )
             except Exception:
                 logger.exception('Failed to create snapshot for aoi_id=%s', aoi['id'])
         return snapshots

@@ -30,6 +30,7 @@ export class App {
   private scoreByRoute = new globalThis.Map<string, RouteScore>();
   private mode: Mode = 'default';
   private selectedAoiId: string | null = null;
+  private aoiGeometries = new globalThis.Map<string, any>();
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId);
@@ -471,8 +472,10 @@ export class App {
     const center = this.map.getCenter();
     const radiusKm = Number((this.container.querySelector('#aoi-radius') as HTMLInputElement).value || '80');
     const name = (this.container.querySelector('#aoi-name') as HTMLInputElement).value || 'AOI';
-    const d = radiusKm / 111;
-    const poly = { type: 'Polygon', coordinates: [[[center.lng - d, center.lat - d], [center.lng + d, center.lat - d], [center.lng + d, center.lat + d], [center.lng - d, center.lat + d], [center.lng - d, center.lat - d]]] };
+    const latDelta = radiusKm / 111;
+    const latRadians = (center.lat * Math.PI) / 180;
+    const lonDelta = radiusKm / (111 * Math.max(Math.cos(latRadians), 0.01));
+    const poly = { type: 'Polygon', coordinates: [[[center.lng - lonDelta, center.lat - latDelta], [center.lng + lonDelta, center.lat - latDelta], [center.lng + lonDelta, center.lat + latDelta], [center.lng - lonDelta, center.lat + latDelta], [center.lng - lonDelta, center.lat - latDelta]]] };
     await this.safeFetchJson(`${this.getCompoundApiBase()}/aois`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, geometry: poly, country_tags: [] }) });
     await this.refreshWatchlists();
   }
@@ -481,17 +484,21 @@ export class App {
     const aois = (await this.safeFetchJson<any[]>(`${this.getCompoundApiBase()}/aois`)) || [];
     const list = this.container.querySelector('#aoi-list') as HTMLElement;
     list.replaceChildren();
+    this.aoiGeometries.clear();
     for (const aoi of aois) {
       const btn = document.createElement('button');
       btn.className = 'issue';
       btn.textContent = `${aoi.name} · risk ${Number(aoi.current_risk_score || 0).toFixed(1)}`;
+      const aoiId = String(aoi.id);
+      this.aoiGeometries.set(aoiId, aoi.geometry);
       btn.addEventListener('click', () => {
-        this.selectedAoiId = String(aoi.id);
-        this.renderAoiGeometry(aoi.geometry);
+        this.selectedAoiId = aoiId;
+        const geometry = this.aoiGeometries.get(aoiId);
+        if (geometry) this.renderAoiGeometry(geometry);
         this.refreshChanges().catch(console.error);
       });
       list.appendChild(btn);
-      if (!this.selectedAoiId) this.selectedAoiId = String(aoi.id);
+      if (!this.selectedAoiId) this.selectedAoiId = aoiId;
     }
     await this.refreshChanges();
   }
@@ -521,9 +528,10 @@ export class App {
       const btn = document.createElement('button');
       btn.className = 'issue';
       btn.textContent = item.delta.human_readable?.summary || `Δ risk ${item.delta.risk_change}`;
-      btn.addEventListener('click', async () => {
-        const detail = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}`);
-        this.renderAoiGeometry(detail.geometry);
+      btn.addEventListener('click', () => {
+        if (!this.selectedAoiId) return;
+        const geometry = this.aoiGeometries.get(this.selectedAoiId);
+        if (geometry) this.renderAoiGeometry(geometry);
       });
       box.appendChild(btn);
     }
@@ -534,8 +542,12 @@ export class App {
     const changes = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
     const latest = changes?.items?.[0];
     const fallback = latest ? `AOI update: ${latest.delta.human_readable?.summary || 'No summary'}` : 'No recent AOI deltas';
-    await this.safeFetchJson(`${this.getCompoundApiBase()}/agent/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: fallback }) }).catch(() => null);
-    this.setStatus(fallback);
+    const memo = await this.safeFetchJson<{ memo?: string }>(`${this.getCompoundApiBase()}/agent/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: fallback }) });
+    if (memo) {
+      this.setStatus('Memo generated successfully');
+    } else {
+      this.setStatus(`Memo generation failed. ${fallback}`);
+    }
   }
 
   private addClusterLayers(sourceId: string, color: string): void {

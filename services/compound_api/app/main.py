@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from os import getenv
 from typing import Any
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fastapi import FastAPI, HTTPException, Query
 import httpx
@@ -92,6 +92,23 @@ class AoiCreateIn(BaseModel):
     name: str
     geometry: dict[str, Any]
     country_tags: list[str] = Field(default_factory=list)
+
+    @field_validator('geometry')
+    @classmethod
+    def validate_geometry(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError('geometry must be a GeoJSON object')
+        geo_type = value.get('type')
+        coords = value.get('coordinates')
+        if geo_type not in {'Polygon', 'MultiPolygon'}:
+            raise ValueError('geometry.type must be Polygon or MultiPolygon')
+        if not isinstance(coords, list) or not coords:
+            raise ValueError('geometry.coordinates must be a non-empty array')
+        return value
+
+
+class AoiSnapshotRefreshIn(BaseModel):
+    run_id: str | None = None
 
 
 def _parse_bbox(raw_bbox: str | None) -> list[float] | None:
@@ -498,7 +515,12 @@ async def create_aoi_snapshot(aoi_id: str) -> dict[str, Any]:
     if not run:
         raise HTTPException(status_code=404, detail='no hazard runs')
     try:
-        snapshot = await app.state.storage.create_aoi_snapshot(aoi_id=aoi_id, run_id=run['run_id'], timestep=0)
+        snapshot = await app.state.storage.create_aoi_snapshot(
+            aoi_id=aoi_id,
+            run_id=run['run_id'],
+            timestep=0,
+            event_lookback_hours=app.state.settings.event_lookback_hours,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
@@ -510,9 +532,16 @@ async def create_aoi_snapshot(aoi_id: str) -> dict[str, Any]:
 
 
 @app.post('/aois/snapshots/refresh')
-async def refresh_aoi_snapshots() -> dict[str, Any]:
-    run = await app.state.storage.latest_run()
-    if not run:
-        raise HTTPException(status_code=404, detail='no hazard runs')
-    items = await app.state.storage.refresh_all_aoi_snapshots(run_id=run['run_id'], timestep=0)
+async def refresh_aoi_snapshots(body: AoiSnapshotRefreshIn | None = None) -> dict[str, Any]:
+    run_id = body.run_id if body else None
+    if not run_id:
+        run = await app.state.storage.latest_run()
+        if not run:
+            raise HTTPException(status_code=404, detail='no hazard runs')
+        run_id = run['run_id']
+    items = await app.state.storage.refresh_all_aoi_snapshots(
+        run_id=run_id,
+        timestep=0,
+        event_lookback_hours=app.state.settings.event_lookback_hours,
+    )
     return {'ok': True, 'count': len(items)}

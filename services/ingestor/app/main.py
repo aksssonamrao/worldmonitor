@@ -36,7 +36,7 @@ async def _run_monitoring_cycle(settings, storage) -> None:
         except Exception:
             logger.exception('Hazard generation failed in monitoring cycle')
         try:
-            await client.post(f'{settings.compound_api_url}/aois/snapshots/refresh')
+            await client.post(f'{settings.compound_api_url}/aois/snapshots/refresh', json={'run_id': run_id})
         except Exception:
             logger.exception('AOI snapshot refresh failed in monitoring cycle')
 
