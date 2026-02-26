@@ -2154,14 +2154,29 @@ export class DeckGLMap {
       return;
     }
     const p = alert.properties;
-    detail.innerHTML = `
-      <div><strong>${escapeHtml(String(p.title || p.name || 'Alert'))}</strong></div>
-      <div>Score: ${alert.score.toFixed(2)}</div>
-      <div>${escapeHtml(String(p.summary || ''))}</div>
-      <div><small>${escapeHtml(String(p.explanation || p.driver || ''))}</small></div>
-      <div><small>${escapeHtml(String(p.impact || ''))}</small></div>
-      <div><small>${escapeHtml(String(p.recommendation || ''))}</small></div>
-    `;
+    const title = escapeHtml(String(p.title || p.name || 'Alert'));
+    const summary = p.summary ? escapeHtml(String(p.summary)) : '';
+    const explanationOrDriver = p.explanation || p.driver ? escapeHtml(String(p.explanation || p.driver)) : '';
+    const impact = p.impact ? escapeHtml(String(p.impact)) : '';
+    const recommendation = p.recommendation ? escapeHtml(String(p.recommendation)) : '';
+
+    const sections: string[] = [];
+    sections.push(`<div><strong>${title}</strong></div>`);
+    sections.push(`<div>Score: ${alert.score.toFixed(2)}</div>`);
+    if (summary) {
+      sections.push(`<div>${summary}</div>`);
+    }
+    if (explanationOrDriver) {
+      sections.push(`<div><small>${explanationOrDriver}</small></div>`);
+    }
+    if (impact) {
+      sections.push(`<div><small>${impact}</small></div>`);
+    }
+    if (recommendation) {
+      sections.push(`<div><small>${recommendation}</small></div>`);
+    }
+
+    detail.innerHTML = sections.join('');
   }
 
   private renderCompoundDrawer(): void {
