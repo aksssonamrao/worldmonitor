@@ -326,6 +326,33 @@ class Storage:
                     )
         return sorted(results, key=lambda x: x['score'], reverse=True)
 
+    def _normalize_route_payload(self, payload: Any) -> dict[str, Any] | None:
+        if payload is None:
+            return None
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            return None
+
+        if isinstance(payload.get('geometry'), str):
+            payload['geometry'] = json.loads(payload['geometry'])
+
+        segment_scores = payload.get('segment_scores')
+        if isinstance(segment_scores, list):
+            for segment in segment_scores:
+                if isinstance(segment, dict) and isinstance(segment.get('geometry'), str):
+                    segment['geometry'] = json.loads(segment['geometry'])
+
+        top_evidence = payload.get('top_evidence')
+        if isinstance(top_evidence, dict):
+            for bucket in ('events', 'alerts', 'hazards'):
+                entries = top_evidence.get(bucket)
+                if isinstance(entries, list):
+                    for item in entries:
+                        if isinstance(item, dict) and isinstance(item.get('geometry'), str):
+                            item['geometry'] = json.loads(item['geometry'])
+        return payload
+
     async def get_route_score_cache(self, route_hash: str, time_bucket: str) -> dict[str, Any] | None:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -337,7 +364,9 @@ class Storage:
                 route_hash,
                 time_bucket,
             )
-        return row['payload'] if row else None
+        if not row:
+            return None
+        return self._normalize_route_payload(row['payload'])
 
     async def set_route_score_cache(self, route_hash: str, time_bucket: str, payload: dict[str, Any]) -> None:
         async with self._pool.acquire() as conn:
@@ -359,10 +388,21 @@ class Storage:
         lookback_hours: int,
         run_id: str,
         timestep: int,
+        depart_time: datetime,
+        arrive_by: datetime,
         buffer_meters: float = 15000,
     ) -> dict[str, Any]:
         route_json = json.dumps(geometry, sort_keys=True)
-        route_hash = hashlib.sha256(route_json.encode('utf-8')).hexdigest()
+        cache_material = {
+            'geometry': geometry,
+            'lookback_hours': lookback_hours,
+            'run_id': run_id,
+            'timestep': timestep,
+            'buffer_meters': buffer_meters,
+            'depart_time': depart_time.isoformat(),
+            'arrive_by': arrive_by.isoformat(),
+        }
+        route_hash = hashlib.sha256(json.dumps(cache_material, sort_keys=True).encode('utf-8')).hexdigest()
         time_bucket = datetime.utcnow().strftime('%Y%m%d%H')
         cached = await self.get_route_score_cache(route_hash, time_bucket)
         if cached:
@@ -437,15 +477,39 @@ class Storage:
                            ST_LineInterpolatePoint((r.geom::geometry), i / 20.0)::geography AS a,
                            ST_LineInterpolatePoint((r.geom::geometry), (i+1) / 20.0)::geography AS b
                     FROM route r, generate_series(0, 19) i
+                ),
+                segments AS (
+                    SELECT
+                        i,
+                        ST_MakeLine(a::geometry, b::geometry)::geography AS segment_line,
+                        ST_Buffer(ST_MakeLine(a::geometry, b::geometry)::geography, $4) AS segment_buffer
+                    FROM points
+                ),
+                hazard_stats AS (
+                    SELECT s.i, AVG(h.hazard_prob) * 100.0 AS hazard_avg
+                    FROM segments s
+                    LEFT JOIN hazards h ON h.run_id = $2
+                        AND h.timestep = $3
+                        AND ST_Intersects(s.segment_buffer, h.geom)
+                    GROUP BY s.i
+                ),
+                event_stats AS (
+                    SELECT s.i, AVG(e.severity * e.confidence) * 100.0 AS event_avg
+                    FROM segments s
+                    LEFT JOIN events e ON e.occurred_at >= NOW() - make_interval(hours => $5)
+                        AND ST_Intersects(s.segment_buffer, e.geom)
+                    GROUP BY s.i
                 )
-                SELECT i,
+                SELECT s.i,
                     LEAST(100.0,
-                        COALESCE((SELECT AVG(h.hazard_prob) * 100 FROM hazards h WHERE h.run_id = $2 AND h.timestep = $3 AND ST_Intersects(ST_Buffer(ST_MakeLine(a, b), $4), h.geom)),0) * 0.6 +
-                        COALESCE((SELECT AVG(e.severity * e.confidence) * 100 FROM events e WHERE e.occurred_at >= NOW() - make_interval(hours => $5) AND ST_Intersects(ST_Buffer(ST_MakeLine(a, b), $4), e.geom)),0) * 0.4
+                        COALESCE(hs.hazard_avg, 0) * 0.6 +
+                        COALESCE(es.event_avg, 0) * 0.4
                     ) AS score,
-                    ST_AsGeoJSON(ST_MakeLine(a::geometry, b::geometry))::json AS geometry
-                FROM points
-                ORDER BY i ASC
+                    ST_AsGeoJSON(s.segment_line::geometry)::json AS geometry
+                FROM segments s
+                LEFT JOIN hazard_stats hs ON hs.i = s.i
+                LEFT JOIN event_stats es ON es.i = s.i
+                ORDER BY s.i ASC
                 """,
                 route_json,
                 run_id,

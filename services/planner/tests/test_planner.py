@@ -115,7 +115,7 @@ def test_plan_accepts_selected_route_geometry(monkeypatch):
     payload = _payload()
     payload['selected_route_geometry'] = {'type': 'LineString', 'coordinates': [[-122.4, 37.7], [-122.3, 37.8]]}
     body = client.post('/plan', json=payload).json()
-    assert body['selected_route_geometry']['type'] == 'LineString'
+    assert body['selected_route_geometry'] == payload['selected_route_geometry']
 
 
 def test_agent_brief_template():

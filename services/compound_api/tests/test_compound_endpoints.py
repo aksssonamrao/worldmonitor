@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from uuid import uuid4
 
 import pytest
@@ -17,6 +19,8 @@ class FakeStorage:
         self.samples = {}
         self.events = []
         self.cache = {}
+        self.cache_get_calls = 0
+        self.cache_set_calls = 0
 
     async def insert_run(self, run_id, bbox, timesteps):
         self.runs.append({'run_id': run_id, 'bbox': bbox, 'timesteps': timesteps, 'status': 'RUNNING', 'started_at': datetime.now(timezone.utc), 'finished_at': None, 'points_requested': 0, 'points_fetched': 0, 'cache_hits': 0, 'error': None})
@@ -120,15 +124,32 @@ class FakeStorage:
         return self.runs[-1] if self.runs else None
 
     async def get_route_score_cache(self, route_hash, time_bucket):
+        self.cache_get_calls += 1
         return self.cache.get((route_hash, time_bucket))
 
     async def set_route_score_cache(self, route_hash, time_bucket, payload):
+        self.cache_set_calls += 1
         self.cache[(route_hash, time_bucket)] = payload
 
-    async def score_route_corridor(self, geometry, lookback_hours, run_id, timestep, buffer_meters=15000):
+    async def score_route_corridor(self, geometry, lookback_hours, run_id, timestep, depart_time, arrive_by, buffer_meters=15000):
+        time_bucket = datetime.utcnow().strftime('%Y%m%d%H')
+        cache_material = {
+            'geometry': geometry,
+            'lookback_hours': lookback_hours,
+            'run_id': run_id,
+            'timestep': timestep,
+            'buffer_meters': buffer_meters,
+            'depart_time': depart_time.isoformat(),
+            'arrive_by': arrive_by.isoformat(),
+        }
+        route_hash = hashlib.sha256(json.dumps(cache_material, sort_keys=True).encode('utf-8')).hexdigest()
+        cached = await self.get_route_score_cache(route_hash, time_bucket)
+        if cached:
+            return cached
+
         coords = geometry.get('coordinates', [])
         base = 20 + len(coords) * 5
-        return {
+        payload = {
             'total_risk': float(base),
             'summary_risk': {'total': float(base), 'weather': base * 0.4, 'news': base * 0.35, 'compound': base * 0.25},
             'segment_scores': [
@@ -137,6 +158,8 @@ class FakeStorage:
             ],
             'top_evidence': {'events': [], 'alerts': [], 'hazards': []},
         }
+        await self.set_route_score_cache(route_hash, time_bucket, payload)
+        return payload
 
 
 class FakeWeatherClient:
@@ -247,6 +270,7 @@ def test_routes_options_and_score(configured_app):
     routes = options_resp.json()['routes']
     assert len(routes) == 3
     assert {route['name'] for route in routes} == {'Fastest', 'Balanced', 'Safest'}
+    assert storage.cache_set_calls >= 3
 
     score_resp = client.post(
         '/routes/score',
@@ -262,3 +286,33 @@ def test_routes_options_and_score(configured_app):
     score = score_resp.json()
     assert score['segment_scores']
     assert 'top_evidence' in score
+
+    assert storage.cache
+    assert storage.cache_set_calls >= 1
+    get_calls_after_first = storage.cache_get_calls
+
+    score_resp_second = client.post(
+        '/routes/score',
+        json={
+            'geometry': routes[0]['geometry'],
+            'depart_time': now.isoformat(),
+            'arrive_by': (now + timedelta(hours=10)).isoformat(),
+            'run_id': 'latest',
+            'timestep': 0,
+        },
+    )
+    assert score_resp_second.status_code == 200
+    assert score_resp_second.json() == score
+    assert storage.cache_get_calls > get_calls_after_first
+
+    invalid_time = client.post(
+        '/routes/score',
+        json={
+            'geometry': routes[0]['geometry'],
+            'depart_time': 'bad-datetime',
+            'arrive_by': (now + timedelta(hours=10)).isoformat(),
+            'run_id': 'latest',
+            'timestep': 0,
+        },
+    )
+    assert invalid_time.status_code == 422

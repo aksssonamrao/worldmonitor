@@ -110,6 +110,16 @@ async def _run_id_param(run_id: str | None) -> str:
     return latest['run_id']
 
 
+def _parse_route_datetime(raw_value: str, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f'{field_name} must be a valid ISO-8601 datetime') from exc
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=422, detail=f'{field_name} must include timezone information')
+    return parsed
+
+
 @app.get('/compound/health')
 async def compound_health() -> dict[str, Any]:
     ingestion_state = {}
@@ -310,6 +320,11 @@ def _distance_km(origin: PointIn, destination: PointIn) -> float:
 
 @app.post('/routes/options')
 async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
+    depart_time = _parse_route_datetime(body.depart_time, 'depart_time')
+    arrive_by = _parse_route_datetime(body.arrive_by, 'arrive_by')
+    if depart_time >= arrive_by:
+        raise HTTPException(status_code=422, detail='depart_time must be before arrive_by')
+
     base_distance = _distance_km(body.origin, body.destination)
     options = [
         {'id': 'fastest', 'name': 'Fastest', 'geometry': _line_option(body.origin, body.destination, 0.0), 'distance_factor': 1.0, 'eta_factor': 1.0},
@@ -319,7 +334,14 @@ async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
     scored = []
     run_id = await _run_id_param('latest')
     for item in options:
-        score = await app.state.storage.score_route_corridor(item['geometry'], app.state.settings.event_lookback_hours, run_id, 0)
+        score = await app.state.storage.score_route_corridor(
+            item['geometry'],
+            app.state.settings.event_lookback_hours,
+            run_id,
+            0,
+            depart_time,
+            arrive_by,
+        )
         risk_bias = {'fastest': 1.1, 'balanced': 1.0, 'safest': 0.82}[item['id']]
         summary = dict(score['summary_risk'])
         summary['total'] = round(min(100.0, summary['total'] * risk_bias * (1.1 - body.risk_appetite * 0.2)), 3)
@@ -338,10 +360,17 @@ async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
 
 @app.post('/routes/score')
 async def route_score(body: RouteScoreIn) -> dict[str, Any]:
+    depart_time = _parse_route_datetime(body.depart_time, 'depart_time')
+    arrive_by = _parse_route_datetime(body.arrive_by, 'arrive_by')
+    if depart_time >= arrive_by:
+        raise HTTPException(status_code=422, detail='depart_time must be before arrive_by')
+
     run_id = await _run_id_param(body.run_id)
     return await app.state.storage.score_route_corridor(
         geometry=body.geometry,
         lookback_hours=app.state.settings.event_lookback_hours,
         run_id=run_id,
         timestep=body.timestep,
+        depart_time=depart_time,
+        arrive_by=arrive_by,
     )

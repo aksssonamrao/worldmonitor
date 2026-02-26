@@ -44,3 +44,5 @@ Frontend layer system:
 - events cluster layer
 - alerts cluster layer
 - hazards polygon layer
+
+Route scoring cache is persisted in `route_score_cache` and cleaned hourly via `route_score_cache_retention_cleanup()` (default retention 30 days), backed by `route_score_cache_created_at_idx`.

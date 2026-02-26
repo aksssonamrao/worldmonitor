@@ -285,6 +285,7 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
                 'assumptions': ['Straight-line distance approximation', 'Deterministic OR-Tools configuration'],
             },
             'llm_summary': None,
+            'selected_route_geometry': request.selected_route_geometry,
         }
 
     routes = []
