@@ -29,6 +29,7 @@ export class App {
   private selectedRouteId: string | null = null;
   private scoreByRoute = new globalThis.Map<string, RouteScore>();
   private mode: Mode = 'default';
+  private selectedAoiId: string | null = null;
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId);
@@ -51,7 +52,7 @@ export class App {
         <label>Mode<select id="mode"><option value="default">Default</option><option value="fallback">Fallback</option><option value="multi-stop">Multi-stop</option></select></label>
         <label>Stops (lat,lon per line)<textarea id="stops" rows="4" placeholder="36.0,-120.0"></textarea></label>
       </aside>
-      <aside class="panel panel-right"><h3>Route Options</h3><div id="route-cards"></div><h4>Issues along route</h4><div id="issues"></div></aside>
+      <aside class="panel panel-right"><h3>Route Options</h3><div id="route-cards"></div><h4>Issues along route</h4><div id="issues"></div><hr><h3>Watchlists</h3><label>Name<input id="aoi-name" value="Primary AOI"></label><label>Radius km<input id="aoi-radius" value="80"></label><button id="aoi-create">Create AOI from map center</button><button id="aoi-snapshot">Manual Snapshot</button><button id="aoi-memo">Generate memo</button><div id="aoi-list"></div><h4>Changes</h4><div id="aoi-changes"></div></aside>
       <section class="drawer"><h3>Evidence</h3><div id="evidence"></div></section>
       <div class="legend">Risk 0..100<div class="gradient"></div></div>
     </main>`;
@@ -71,6 +72,7 @@ export class App {
     this.map.on('load', async () => {
       await this.loadEvidenceLayers();
       this.bindUI();
+      await this.refreshWatchlists();
     });
   }
 
@@ -134,6 +136,10 @@ export class App {
         this.setStatus(error instanceof Error ? error.message : 'Failed to generate routes');
       });
     });
+
+    this.container.querySelector('#aoi-create')?.addEventListener('click', () => this.createAoiFromCenter().catch(console.error));
+    this.container.querySelector('#aoi-snapshot')?.addEventListener('click', () => this.createSnapshot().catch(console.error));
+    this.container.querySelector('#aoi-memo')?.addEventListener('click', () => this.generateMemo().catch(console.error));
   }
 
   private parsePoint(input: string): { lat: number; lon: number } {
@@ -175,7 +181,7 @@ export class App {
     const depart = this.parseDateInput((this.container.querySelector('#depart') as HTMLInputElement).value, 'Depart time');
     const arrive = this.parseDateInput((this.container.querySelector('#arrive') as HTMLInputElement).value, 'Arrive by');
     const risk = Number((this.container.querySelector('#risk') as HTMLInputElement).value);
-    const api = (import.meta.env.VITE_COMPOUND_API_URL || 'http://localhost:8090').replace(/\/$/, '');
+    const api = this.getCompoundApiBase();
     const payload = { origin, destination, depart_time: depart, arrive_by: arrive, risk_appetite: risk };
 
     const options = await this.safeFetchJson<{ routes: RouteOption[] }>(`${api}/routes/options`, {
@@ -440,7 +446,7 @@ export class App {
   }
 
   private async loadEvidenceLayers(): Promise<void> {
-    const api = (import.meta.env.VITE_COMPOUND_API_URL || 'http://localhost:8090').replace(/\/$/, '');
+    const api = this.getCompoundApiBase();
     const [events, alerts, hazards] = await Promise.all([
       this.safeFetchJson<FeatureCollection>(`${api}/compound/events?since_hours=72`),
       this.safeFetchJson<FeatureCollection>(`${api}/compound/alerts?run_id=latest&timestep=0`),
@@ -454,6 +460,82 @@ export class App {
 
     this.addClusterLayers('events', '#00bbf9');
     this.addClusterLayers('alerts', '#ff006e');
+  }
+
+
+  private getCompoundApiBase(): string {
+    return (import.meta.env.VITE_COMPOUND_API_URL || 'http://localhost:8090').replace(/\/$/, '');
+  }
+
+  private async createAoiFromCenter(): Promise<void> {
+    const center = this.map.getCenter();
+    const radiusKm = Number((this.container.querySelector('#aoi-radius') as HTMLInputElement).value || '80');
+    const name = (this.container.querySelector('#aoi-name') as HTMLInputElement).value || 'AOI';
+    const d = radiusKm / 111;
+    const poly = { type: 'Polygon', coordinates: [[[center.lng - d, center.lat - d], [center.lng + d, center.lat - d], [center.lng + d, center.lat + d], [center.lng - d, center.lat + d], [center.lng - d, center.lat - d]]] };
+    await this.safeFetchJson(`${this.getCompoundApiBase()}/aois`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, geometry: poly, country_tags: [] }) });
+    await this.refreshWatchlists();
+  }
+
+  private async refreshWatchlists(): Promise<void> {
+    const aois = (await this.safeFetchJson<any[]>(`${this.getCompoundApiBase()}/aois`)) || [];
+    const list = this.container.querySelector('#aoi-list') as HTMLElement;
+    list.replaceChildren();
+    for (const aoi of aois) {
+      const btn = document.createElement('button');
+      btn.className = 'issue';
+      btn.textContent = `${aoi.name} · risk ${Number(aoi.current_risk_score || 0).toFixed(1)}`;
+      btn.addEventListener('click', () => {
+        this.selectedAoiId = String(aoi.id);
+        this.renderAoiGeometry(aoi.geometry);
+        this.refreshChanges().catch(console.error);
+      });
+      list.appendChild(btn);
+      if (!this.selectedAoiId) this.selectedAoiId = String(aoi.id);
+    }
+    await this.refreshChanges();
+  }
+
+  private renderAoiGeometry(geometry: any): void {
+    const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry, properties: {} }] };
+    if (this.map.getSource('aoi-active')) (this.map.getSource('aoi-active') as maplibregl.GeoJSONSource).setData(fc as any);
+    else {
+      this.map.addSource('aoi-active', { type: 'geojson', data: fc as any });
+      this.map.addLayer({ id: 'aoi-active-fill', type: 'fill', source: 'aoi-active', paint: { 'fill-color': '#f59e0b', 'fill-opacity': 0.15 } });
+      this.map.addLayer({ id: 'aoi-active-line', type: 'line', source: 'aoi-active', paint: { 'line-color': '#f59e0b', 'line-width': 2 } });
+    }
+  }
+
+  private async createSnapshot(): Promise<void> {
+    if (!this.selectedAoiId) return;
+    await this.safeFetchJson(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/snapshot`, { method: 'POST' });
+    await this.refreshWatchlists();
+  }
+
+  private async refreshChanges(): Promise<void> {
+    if (!this.selectedAoiId) return;
+    const changes = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
+    const box = this.container.querySelector('#aoi-changes') as HTMLElement;
+    box.replaceChildren();
+    for (const item of (changes?.items || [])) {
+      const btn = document.createElement('button');
+      btn.className = 'issue';
+      btn.textContent = item.delta.human_readable?.summary || `Δ risk ${item.delta.risk_change}`;
+      btn.addEventListener('click', async () => {
+        const detail = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}`);
+        this.renderAoiGeometry(detail.geometry);
+      });
+      box.appendChild(btn);
+    }
+  }
+
+  private async generateMemo(): Promise<void> {
+    if (!this.selectedAoiId) return;
+    const changes = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
+    const latest = changes?.items?.[0];
+    const fallback = latest ? `AOI update: ${latest.delta.human_readable?.summary || 'No summary'}` : 'No recent AOI deltas';
+    await this.safeFetchJson(`${this.getCompoundApiBase()}/agent/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: fallback }) }).catch(() => null);
+    this.setStatus(fallback);
   }
 
   private addClusterLayers(sourceId: string, color: string): void {

@@ -549,3 +549,229 @@ class Storage:
         }
         await self.set_route_score_cache(route_hash, time_bucket, payload)
         return payload
+
+    async def create_aoi(self, name: str, geometry: dict[str, Any], country_tags: list[str] | None = None) -> dict[str, Any]:
+        country_tags = [tag.upper() for tag in (country_tags or [])]
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO aois (name, geom, country_tags)
+                VALUES ($1, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)::geography, $3::text[])
+                RETURNING id, name, country_tags, created_at, ST_AsGeoJSON(geom::geometry)::json AS geometry
+                """,
+                name,
+                json.dumps(geometry),
+                country_tags,
+            )
+        return dict(row)
+
+    async def list_aois(self) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT a.id, a.name, a.country_tags, a.created_at,
+                       ST_AsGeoJSON(a.geom::geometry)::json AS geometry,
+                       s.captured_at AS last_updated,
+                       COALESCE((s.summary_json->>'risk_score')::double precision, 0) AS current_risk_score
+                FROM aois a
+                LEFT JOIN LATERAL (
+                    SELECT captured_at, summary_json
+                    FROM aoi_snapshots
+                    WHERE aoi_id = a.id
+                    ORDER BY captured_at DESC
+                    LIMIT 1
+                ) s ON true
+                ORDER BY a.created_at DESC
+                """
+            )
+        return [dict(r) for r in rows]
+
+    async def get_aoi(self, aoi_id: str) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, name, country_tags, created_at, ST_AsGeoJSON(geom::geometry)::json AS geometry
+                FROM aois
+                WHERE id = $1::uuid
+                """,
+                aoi_id,
+            )
+        return dict(row) if row else None
+
+    async def delete_aoi(self, aoi_id: str) -> bool:
+        async with self._pool.acquire() as conn:
+            result = await conn.execute('DELETE FROM aois WHERE id = $1::uuid', aoi_id)
+        return result.endswith('1')
+
+    async def create_aoi_snapshot(self, aoi_id: str, run_id: str, timestep: int = 0) -> dict[str, Any]:
+        async with self._pool.acquire() as conn:
+            aoi = await conn.fetchrow('SELECT id, geom FROM aois WHERE id = $1::uuid', aoi_id)
+            if not aoi:
+                raise ValueError('aoi not found')
+
+            event_rows = await conn.fetch(
+                """
+                SELECT e.id, e.title, e.event_type, e.severity, e.confidence, e.occurred_at
+                FROM events e
+                WHERE e.occurred_at >= NOW() - make_interval(hours => 168)
+                  AND ST_Intersects(e.geom, $1)
+                ORDER BY e.occurred_at DESC
+                """,
+                aoi['geom'],
+            )
+            hazard_rows = await conn.fetch(
+                """
+                SELECT type, hazard_prob
+                FROM hazards
+                WHERE run_id = $1 AND timestep = $2
+                  AND ST_Intersects(geom, $3)
+                """,
+                run_id,
+                timestep,
+                aoi['geom'],
+            )
+            alert_rows = await conn.fetch(
+                """
+                SELECT c.event_id, c.score
+                FROM compound_alerts c
+                WHERE c.run_id = $1 AND c.timestep = $2
+                  AND ST_Intersects(c.geom, $3)
+                ORDER BY c.score DESC
+                LIMIT 10
+                """,
+                run_id,
+                timestep,
+                aoi['geom'],
+            )
+
+            event_counts: dict[str, int] = {}
+            for row in event_rows:
+                event_counts[row['event_type']] = event_counts.get(row['event_type'], 0) + 1
+
+            hazard_counts: dict[str, int] = {}
+            max_intensity = 0.0
+            hazard_score = 0.0
+            for row in hazard_rows:
+                hazard_counts[row['type']] = hazard_counts.get(row['type'], 0) + 1
+                max_intensity = max(max_intensity, float(row['hazard_prob']))
+                hazard_score += float(row['hazard_prob'])
+
+            summary_json = {
+                'event_counts_by_type': event_counts,
+                'top_events': [
+                    {
+                        'id': str(row['id']),
+                        'title': row['title'],
+                        'event_type': row['event_type'],
+                        'occurred_at': row['occurred_at'].isoformat(),
+                    }
+                    for row in event_rows[:10]
+                ],
+                'hazard_summary': {
+                    'top_hazard_types': sorted(hazard_counts.items(), key=lambda item: item[1], reverse=True)[:5],
+                    'max_intensity': max_intensity,
+                },
+                'top_compound_alerts': [
+                    {'id': str(row['event_id']), 'score': float(row['score'])}
+                    for row in alert_rows
+                ],
+                'risk_score': round(min(100.0, (hazard_score * 25.0) + (len(alert_rows) * 2.0)), 3),
+            }
+            digest = hashlib.sha256(json.dumps(summary_json, sort_keys=True).encode('utf-8')).hexdigest()
+            new_snapshot = await conn.fetchrow(
+                """
+                INSERT INTO aoi_snapshots (aoi_id, run_id, timestep, captured_at, summary_json, hash)
+                VALUES ($1::uuid, $2, $3, NOW(), $4::jsonb, $5)
+                RETURNING id, aoi_id, run_id, timestep, captured_at, summary_json, hash
+                """,
+                aoi_id,
+                run_id,
+                timestep,
+                json.dumps(summary_json),
+                digest,
+            )
+
+            prev = await conn.fetchrow(
+                """
+                SELECT id, summary_json
+                FROM aoi_snapshots
+                WHERE aoi_id = $1::uuid AND id != $2::uuid
+                ORDER BY captured_at DESC
+                LIMIT 1
+                """,
+                aoi_id,
+                new_snapshot['id'],
+            )
+
+            if prev:
+                prev_summary = prev['summary_json']
+                prev_events = {item['id'] for item in prev_summary.get('top_events', [])}
+                curr_events = {item['id'] for item in summary_json.get('top_events', [])}
+                prev_alerts = {item['id'] for item in prev_summary.get('top_compound_alerts', [])}
+                curr_alerts = {item['id'] for item in summary_json.get('top_compound_alerts', [])}
+                prev_count = sum((prev_summary.get('event_counts_by_type') or {}).values())
+                curr_count = sum(event_counts.values())
+                delta_json = {
+                    'new_events': sorted(curr_events - prev_events),
+                    'resolved_events': sorted(prev_events - curr_events),
+                    'event_count_change': curr_count - prev_count,
+                    'risk_change': round(summary_json['risk_score'] - float(prev_summary.get('risk_score', 0.0)), 3),
+                    'new_alerts': sorted(curr_alerts - prev_alerts),
+                    'resolved_alerts': sorted(prev_alerts - curr_alerts),
+                }
+                await conn.execute(
+                    """
+                    INSERT INTO aoi_deltas (aoi_id, from_snapshot_id, to_snapshot_id, delta_json)
+                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4::jsonb)
+                    """,
+                    aoi_id,
+                    prev['id'],
+                    new_snapshot['id'],
+                    json.dumps(delta_json),
+                )
+
+        return dict(new_snapshot)
+
+    async def list_aoi_changes(self, aoi_id: str, since_hours: int) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT d.id, d.aoi_id, d.from_snapshot_id, d.to_snapshot_id, d.created_at, d.delta_json,
+                       s.summary_json AS to_summary
+                FROM aoi_deltas d
+                JOIN aoi_snapshots s ON s.id = d.to_snapshot_id
+                WHERE d.aoi_id = $1::uuid
+                  AND d.created_at >= NOW() - make_interval(hours => $2)
+                ORDER BY d.created_at DESC
+                """,
+                aoi_id,
+                since_hours,
+            )
+        output = []
+        for row in rows:
+            delta = dict(row['delta_json'])
+            delta['human_readable'] = {
+                'summary': f"{len(delta.get('new_events', []))} new events, {len(delta.get('resolved_events', []))} resolved, risk Δ {delta.get('risk_change', 0)}",
+                'top_hazard_types': row['to_summary'].get('hazard_summary', {}).get('top_hazard_types', []),
+            }
+            output.append(
+                {
+                    'id': str(row['id']),
+                    'aoi_id': str(row['aoi_id']),
+                    'from_snapshot_id': str(row['from_snapshot_id']),
+                    'to_snapshot_id': str(row['to_snapshot_id']),
+                    'created_at': row['created_at'],
+                    'delta': delta,
+                }
+            )
+        return output
+
+    async def refresh_all_aoi_snapshots(self, run_id: str, timestep: int = 0) -> list[dict[str, Any]]:
+        aois = await self.list_aois()
+        snapshots: list[dict[str, Any]] = []
+        for aoi in aois:
+            try:
+                snapshots.append(await self.create_aoi_snapshot(str(aoi['id']), run_id=run_id, timestep=timestep))
+            except Exception:
+                logger.exception('Failed to create snapshot for aoi_id=%s', aoi['id'])
+        return snapshots
