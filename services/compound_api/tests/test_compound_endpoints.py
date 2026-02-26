@@ -15,20 +15,20 @@ class FakeStorage:
         self.runs = []
         self.samples = {}
 
-    def insert_run(self, run_id, bbox, timesteps):
+    async def insert_run(self, run_id, bbox, timesteps):
         self.runs.append({'run_id': run_id, 'bbox': bbox, 'timesteps': timesteps, 'status': 'RUNNING', 'started_at': datetime.now(timezone.utc), 'finished_at': None, 'points_requested': 0, 'points_fetched': 0, 'cache_hits': 0, 'error': None})
 
-    def complete_run(self, run_id, status, stats, error=None):
-        run = self.latest_run()
+    async def complete_run(self, run_id, status, stats, error=None):
+        run = self.latest_run_sync()
         run.update({'status': status, 'finished_at': datetime.now(timezone.utc), **stats, 'error': error})
 
-    def clear_hazards(self, run_id):
+    async def clear_hazards(self, run_id):
         self.hazards = [h for h in self.hazards if h['run_id'] != run_id]
 
-    def upsert_sample(self, lat, lon, record):
+    async def upsert_sample(self, lat, lon, record):
         self.samples[(lat, lon, record['forecast_ts'])] = (datetime.now(timezone.utc), record)
 
-    def get_sample(self, lat, lon, ts, ttl_min):
+    async def get_sample(self, lat, lon, ts, ttl_min):
         item = self.samples.get((lat, lon, ts))
         if not item:
             return None
@@ -37,13 +37,16 @@ class FakeStorage:
             return None
         return record
 
-    def insert_hazard(self, run_id, timestep, hazard_type, prob, forecast_ts, bbox, thresholds, wkt):
+    async def insert_hazard(self, run_id, timestep, hazard_type, prob, forecast_ts, bbox, thresholds, wkt):
         self.hazards.append({'run_id': run_id, 'timestep': timestep, 'type': hazard_type, 'hazard_prob': prob, 'forecast_ts': forecast_ts, 'provider': 'google_weather', 'generated_at': datetime.now(timezone.utc), 'geometry': {'type': 'Polygon', 'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]]}})
 
-    def list_hazards(self, run_id, timestep):
+    async def list_hazards(self, run_id, timestep):
         return [h for h in self.hazards if h['run_id'] == run_id and h['timestep'] == timestep]
 
-    def latest_run(self):
+    async def latest_run(self):
+        return self.runs[-1] if self.runs else None
+
+    def latest_run_sync(self):
         return self.runs[-1] if self.runs else None
 
 
@@ -61,7 +64,7 @@ class FakeWeatherClient:
 
 
 @pytest.fixture
-def configured_app(monkeypatch):
+def configured_app():
     from app.config import Settings
 
     storage = FakeStorage()
@@ -102,7 +105,7 @@ def test_cache_reduces_http_calls(configured_app):
     client.post('/compound/hazards/generate', json=body)
     # On identical requests, cached data should be reused so no additional weather HTTP calls are made.
     assert weather.calls == first
-    assert app_obj.state.storage.latest_run()['cache_hits'] > 0
+    assert app_obj.state.storage.latest_run_sync()['cache_hits'] > 0
 
 
 def test_max_points_enforced(configured_app):

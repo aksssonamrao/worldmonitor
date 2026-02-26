@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 BASE_URL="${1:-http://localhost:8090}"
-RUN_ID="latest"
+RUN_ID="smoke-$(date +%s)"
 
 POST_STATUS=$(curl -sS -o /tmp/hazard-generate.json -w '%{http_code}' -X POST "$BASE_URL/compound/hazards/generate" \
   -H 'Content-Type: application/json' \

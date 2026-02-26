@@ -45,14 +45,15 @@ class GoogleWeatherClient:
             'location.longitude': lon,
             'hours': hours,
         }
-        attempt = 0
-        while True:
-            attempt += 1
+        max_retries = 3
+        last_exc: Exception | None = None
+        for attempt in range(1, max_retries + 1):
             await self.bucket.consume()
             try:
                 resp = await self.client.get(f'{self.base_url}/forecast/hours:lookup', params=params)
             except httpx.TimeoutException as exc:
-                if attempt <= 3:
+                last_exc = exc
+                if attempt < max_retries:
                     await asyncio.sleep(2 ** (attempt - 1))
                     continue
                 raise RuntimeError(f'google weather request failed after retries for ({lat},{lon}): {exc!s}') from exc
@@ -61,12 +62,13 @@ class GoogleWeatherClient:
                 raise RuntimeError(f'google weather request failed for ({lat},{lon}): {exc!s}') from exc
 
             if resp.status_code in (429, 500, 502, 503, 504):
-                if attempt <= 3:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                raise RuntimeError(
+                last_exc = RuntimeError(
                     f'google weather exhausted retries for ({lat},{lon}), status={resp.status_code}, body={resp.text[:200]}'
                 )
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** (attempt - 1))
+                    continue
+                raise last_exc
             if resp.status_code >= 400:
                 raise RuntimeError(
                     f'google weather error for ({lat},{lon}), status={resp.status_code}, body={resp.text[:200]}'
@@ -84,3 +86,5 @@ class GoogleWeatherClient:
                 }
                 for r in records
             ]
+        # Should not reach here, but satisfies type checker.
+        raise RuntimeError(f'google weather request failed after {max_retries} retries for ({lat},{lon})')

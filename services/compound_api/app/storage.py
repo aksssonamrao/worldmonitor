@@ -1,96 +1,173 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
+import logging
 from datetime import datetime
 from typing import Any
+
+import asyncpg
+
+logger = logging.getLogger(__name__)
 
 
 class Storage:
     def __init__(self, database_url: str):
         self.database_url = database_url
+        self._pool: asyncpg.Pool | None = None
 
-    def _exec(self, sql: str) -> str:
-        env = os.environ.copy()
-        env['DATABASE_URL'] = self.database_url
-        proc = subprocess.run(['psql', self.database_url, '-t', '-A', '-c', sql], capture_output=True, text=True, env=env)
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.strip() or 'psql query failed')
-        return proc.stdout.strip()
+    async def connect(self) -> None:
+        self._pool = await asyncpg.create_pool(self.database_url)
 
-    def insert_run(self, run_id: str, bbox: list[float], timesteps: list[int]) -> None:
-        self._exec(f"INSERT INTO hazard_runs (run_id,bbox,timesteps,status,started_at,points_requested,points_fetched,cache_hits) VALUES ('{run_id}','{json.dumps(bbox)}'::jsonb,'{json.dumps(timesteps)}'::jsonb,'RUNNING',NOW(),0,0,0) ON CONFLICT (run_id) DO UPDATE SET status='RUNNING',started_at=NOW(),finished_at=NULL,error=NULL")
+    async def close(self) -> None:
+        if self._pool:
+            try:
+                await self._pool.close()
+            except Exception:
+                logger.exception('Error closing storage pool')
+            self._pool = None
 
-    def complete_run(self, run_id: str, status: str, stats: dict[str, Any], error: str | None = None) -> None:
-        err = (error or '').replace("'", "''")
-        error_sql = 'NULL' if not error else "'" + err + "'"
-        self._exec(f"UPDATE hazard_runs SET status='{status}',finished_at=NOW(),points_requested={int(stats.get('points_requested',0))},points_fetched={int(stats.get('points_fetched',0))},cache_hits={int(stats.get('cache_hits',0))},error={error_sql} WHERE run_id='{run_id}'")
+    async def insert_run(self, run_id: str, bbox: list[float], timesteps: list[int]) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO hazard_runs
+                    (run_id, bbox, timesteps, status, started_at,
+                     points_requested, points_fetched, cache_hits)
+                VALUES ($1, $2::jsonb, $3::jsonb, 'RUNNING', NOW(), 0, 0, 0)
+                ON CONFLICT (run_id) DO UPDATE
+                    SET status = 'RUNNING', started_at = NOW(),
+                        finished_at = NULL, error = NULL
+                """,
+                run_id, json.dumps(bbox), json.dumps(timesteps),
+            )
 
-    def clear_hazards(self, run_id: str) -> None:
-        self._exec(f"DELETE FROM hazards WHERE run_id='{run_id}'")
+    async def complete_run(self, run_id: str, status: str, stats: dict[str, Any], error: str | None = None) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE hazard_runs
+                SET status = $1, finished_at = NOW(),
+                    points_requested = $2, points_fetched = $3, cache_hits = $4,
+                    error = $5
+                WHERE run_id = $6
+                """,
+                status,
+                int(stats.get('points_requested', 0)),
+                int(stats.get('points_fetched', 0)),
+                int(stats.get('cache_hits', 0)),
+                error,
+                run_id,
+            )
 
-    def upsert_sample(self, lat: float, lon: float, record: dict[str, Any]) -> None:
-        ts = record['forecast_ts'].isoformat()
-        self._exec(
-            f"""
-            INSERT INTO weather_samples (lat,lon,forecast_ts,fetched_at,wind_kph,precip_mm_hr,temp_c,humidity)
-            VALUES ({lat},{lon},'{ts}',NOW(),{record['wind_kph']},{record['precip_mm_hr']},{record['temp_c']},{record.get('humidity','NULL')})
-            ON CONFLICT (lat,lon,forecast_ts) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,wind_kph=EXCLUDED.wind_kph,precip_mm_hr=EXCLUDED.precip_mm_hr,temp_c=EXCLUDED.temp_c,humidity=EXCLUDED.humidity
-            """
-        )
+    async def clear_hazards(self, run_id: str) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute('DELETE FROM hazards WHERE run_id = $1', run_id)
 
-    def get_sample(self, lat: float, lon: float, forecast_ts: datetime, ttl_min: int) -> dict[str, Any] | None:
-        ts = forecast_ts.isoformat()
-        out = self._exec(f"SELECT row_to_json(t) FROM (SELECT forecast_ts,wind_kph,precip_mm_hr,temp_c,humidity FROM weather_samples WHERE lat={lat} AND lon={lon} AND forecast_ts='{ts}' AND fetched_at >= NOW() - interval '{ttl_min} minutes' LIMIT 1) t")
-        if not out:
+    async def upsert_sample(self, lat: float, lon: float, record: dict[str, Any]) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO weather_samples
+                    (lat, lon, forecast_ts, fetched_at, wind_kph, precip_mm_hr, temp_c, humidity)
+                VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7)
+                ON CONFLICT (lat, lon, forecast_ts) DO UPDATE
+                    SET fetched_at = EXCLUDED.fetched_at,
+                        wind_kph = EXCLUDED.wind_kph,
+                        precip_mm_hr = EXCLUDED.precip_mm_hr,
+                        temp_c = EXCLUDED.temp_c,
+                        humidity = EXCLUDED.humidity
+                """,
+                lat, lon, record['forecast_ts'],
+                record['wind_kph'], record['precip_mm_hr'], record['temp_c'],
+                record.get('humidity'),
+            )
+
+    async def get_sample(self, lat: float, lon: float, forecast_ts: datetime, ttl_min: int) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT forecast_ts, wind_kph, precip_mm_hr, temp_c, humidity
+                FROM weather_samples
+                WHERE lat = $1 AND lon = $2 AND forecast_ts = $3
+                  AND fetched_at >= NOW() - make_interval(mins => $4)
+                LIMIT 1
+                """,
+                lat, lon, forecast_ts, str(ttl_min),
+            )
+        if row is None:
             return None
-        row = json.loads(out)
-        row['forecast_ts'] = datetime.fromisoformat(row['forecast_ts'].replace('Z', '+00:00'))
-        return row
+        return {
+            'forecast_ts': row['forecast_ts'],
+            'wind_kph': row['wind_kph'],
+            'precip_mm_hr': row['precip_mm_hr'],
+            'temp_c': row['temp_c'],
+            'humidity': row['humidity'],
+        }
 
-    def insert_hazard(self, run_id: str, timestep: int, hazard_type: str, prob: float, forecast_ts: datetime, bbox: list[float], thresholds: dict[str, float], wkt: str) -> None:
-        # Validate that bbox is JSON-serializable
-        try:
-            bbox_json = json.dumps(bbox)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"bbox is not JSON-serializable: {e}") from e
-
-        # Validate that thresholds is JSON-serializable
-        try:
-            thresholds_json = json.dumps(thresholds)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"thresholds is not JSON-serializable: {e}") from e
-
-        # Basic validation for WKT input before passing to PostGIS
+    async def insert_hazard(
+        self,
+        run_id: str,
+        timestep: int,
+        hazard_type: str,
+        prob: float,
+        forecast_ts: datetime,
+        bbox: list[float],
+        thresholds: dict[str, float],
+        wkt: str,
+    ) -> None:
         if not isinstance(wkt, str) or not wkt.strip():
-            raise ValueError("wkt must be a non-empty string")
+            raise ValueError('wkt must be a non-empty string')
+        async with self._pool.acquire() as conn:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO hazards
+                        (id, run_id, timestep, forecast_ts, type, hazard_prob,
+                         provider, bbox, thresholds, generated_at, geom)
+                    VALUES (
+                        gen_random_uuid(), $1, $2, $3, $4, $5,
+                        'google_weather', $6::jsonb, $7::jsonb,
+                        NOW(), ST_GeogFromText($8)
+                    )
+                    """,
+                    run_id, timestep, forecast_ts, hazard_type, prob,
+                    json.dumps(bbox), json.dumps(thresholds), wkt,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to insert hazard for run_id '{run_id}', timestep {timestep}: {exc}"
+                ) from exc
 
-        wkt_esc = wkt.replace("'", "''")
-
-        sql = (
-            "INSERT INTO hazards "
-            "(id,run_id,timestep,forecast_ts,type,hazard_prob,provider,bbox,thresholds,generated_at,geom) "
-            f"VALUES (gen_random_uuid(),'{run_id}',{timestep},'{forecast_ts.isoformat()}',"
-            f"'{hazard_type}',{prob},'google_weather','{bbox_json}'::jsonb,'{thresholds_json}'::jsonb,"
-            f"NOW(),ST_GeogFromText('{wkt_esc}'))"
-        )
-
-        try:
-            self._exec(sql)
-        except RuntimeError as e:
-            # Add context to help identify issues such as malformed WKT or bad JSON fields
-            raise RuntimeError(
-                f"Failed to insert hazard for run_id '{run_id}', timestep {timestep}: {e}"
-            ) from e
-    def list_hazards(self, run_id: str, timestep: int) -> list[dict[str, Any]]:
-        out = self._exec(f"SELECT COALESCE(json_agg(row_to_json(t)),'[]'::json) FROM (SELECT type,hazard_prob,forecast_ts,provider,generated_at,ST_AsGeoJSON(geom::geometry)::json as geometry FROM hazards WHERE run_id='{run_id}' AND timestep={timestep} ORDER BY generated_at DESC) t")
-        rows = json.loads(out or '[]')
+    async def list_hazards(self, run_id: str, timestep: int) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT type, hazard_prob, forecast_ts, provider, generated_at,
+                       ST_AsGeoJSON(geom::geometry)::json AS geometry
+                FROM hazards
+                WHERE run_id = $1 AND timestep = $2
+                ORDER BY generated_at DESC
+                """,
+                run_id, timestep,
+            )
+        result = []
         for r in rows:
-            r['forecast_ts'] = datetime.fromisoformat(r['forecast_ts'].replace('Z', '+00:00'))
-            r['generated_at'] = datetime.fromisoformat(r['generated_at'].replace('Z', '+00:00'))
-        return rows
+            item = dict(r)
+            item['geometry'] = json.loads(item['geometry']) if isinstance(item['geometry'], str) else item['geometry']
+            result.append(item)
+        return result
 
-    def latest_run(self) -> dict[str, Any] | None:
-        out = self._exec("SELECT row_to_json(t) FROM (SELECT run_id,bbox,timesteps,status,started_at,finished_at,points_requested,points_fetched,cache_hits,error FROM hazard_runs ORDER BY started_at DESC LIMIT 1) t")
-        return json.loads(out) if out else None
+    async def latest_run(self) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT run_id, bbox, timesteps, status, started_at, finished_at,
+                       points_requested, points_fetched, cache_hits, error
+                FROM hazard_runs
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
+            )
+        if row is None:
+            return None
+        return dict(row)

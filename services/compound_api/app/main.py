@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from os import getenv
@@ -12,6 +13,7 @@ from app.hazards.generator import HazardGenerator
 from app.storage import Storage
 from app.weather.google_weather_client import GoogleWeatherClient
 
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,19 +33,40 @@ async def lifespan(app: FastAPI):
     app.state.last_hazard_error = startup_error
     if settings:
         app.state.settings = settings
-        app.state.storage = Storage(settings.database_url)
+        storage = Storage(settings.database_url)
+        await storage.connect()
+        app.state.storage = storage
         app.state.weather_client = GoogleWeatherClient(settings.google_weather_base_url, settings.google_weather_api_key, settings.max_qps)
         app.state.generator = HazardGenerator(settings, app.state.storage, app.state.weather_client)
+    else:
+        app.state.storage = None
+        app.state.weather_client = None
+        app.state.generator = None
     yield
+    # Teardown: release all resources on shutdown.
+    weather_client = getattr(app.state, 'weather_client', None)
+    if weather_client is not None:
+        try:
+            await weather_client.aclose()
+        except Exception:
+            logger.exception('Error closing weather client')
+        app.state.weather_client = None
+    storage = getattr(app.state, 'storage', None)
+    if storage is not None:
+        try:
+            await storage.close()
+        except Exception:
+            logger.exception('Error closing storage')
+        app.state.storage = None
 
 
 app = FastAPI(title='Compound API', lifespan=lifespan)
 
 
-def _run_id_param(run_id: str | None) -> str:
+async def _run_id_param(run_id: str | None) -> str:
     if run_id and run_id != 'latest':
         return run_id
-    latest = app.state.storage.latest_run()
+    latest = await app.state.storage.latest_run()
     if not latest:
         raise HTTPException(status_code=404, detail='no hazard runs')
     return latest['run_id']
@@ -103,14 +126,14 @@ async def generate_hazards(body: dict[str, Any]) -> dict[str, Any]:
     result = await app.state.generator.generate(run_id, bbox, timestep_hours, hazard_types)
     app.state.last_hazard_run = datetime.now(timezone.utc).isoformat()
     app.state.last_hazard_error = None
-    latest = app.state.storage.latest_run() or {}
+    latest = await app.state.storage.latest_run() or {}
     return {**result, 'started_at': latest.get('started_at'), 'finished_at': latest.get('finished_at')}
 
 
 @app.get('/compound/hazards')
-def get_hazards(timestep: int = Query(default=0, ge=0), run_id: str = 'latest') -> dict[str, Any]:
-    resolved_run_id = _run_id_param(run_id)
-    hazards = app.state.storage.list_hazards(resolved_run_id, timestep)
+async def get_hazards(timestep: int = Query(default=0, ge=0), run_id: str = 'latest') -> dict[str, Any]:
+    resolved_run_id = await _run_id_param(run_id)
+    hazards = await app.state.storage.list_hazards(resolved_run_id, timestep)
     features = [
         {
             'type': 'Feature',
@@ -129,9 +152,9 @@ def get_hazards(timestep: int = Query(default=0, ge=0), run_id: str = 'latest') 
 
 
 @app.get('/compound/alerts')
-def get_alerts(timestep: int = Query(default=0, ge=0), run_id: str = 'latest') -> dict[str, Any]:
-    resolved_run_id = _run_id_param(run_id)
-    hazards = app.state.storage.list_hazards(resolved_run_id, timestep)
+async def get_alerts(timestep: int = Query(default=0, ge=0), run_id: str = 'latest') -> dict[str, Any]:
+    resolved_run_id = await _run_id_param(run_id)
+    hazards = await app.state.storage.list_hazards(resolved_run_id, timestep)
     alerts = [
         {
             'type': 'Feature',
@@ -150,8 +173,8 @@ def get_alerts(timestep: int = Query(default=0, ge=0), run_id: str = 'latest') -
 
 
 @app.get('/compound/hazards/runs/latest')
-def latest_run() -> dict[str, Any]:
-    run = app.state.storage.latest_run()
+async def latest_run() -> dict[str, Any]:
+    run = await app.state.storage.latest_run()
     if not run:
         raise HTTPException(status_code=404, detail='no hazard runs')
     return run

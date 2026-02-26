@@ -34,7 +34,8 @@ class HazardGenerator:
             raise HTTPException(status_code=400, detail='bbox too large')
 
         spacing_km = self.settings.hazard_grid_km
-        while True:
+        max_iterations = 50
+        for iteration in range(max_iterations):
             mean_lat = (min_lat + max_lat) / 2
             lat_deg = spacing_km / 111.0
             lon_deg = spacing_km / (111.0 * max(0.1, cos(radians(mean_lat))))
@@ -49,9 +50,14 @@ class HazardGenerator:
             if len(points) <= self.settings.hazard_max_points:
                 return points, spacing_km
             spacing_km *= 1.25
+        raise RuntimeError(
+            f'_grid_points exceeded {max_iterations} iterations without reducing points '
+            f'below hazard_max_points={self.settings.hazard_max_points}; '
+            f'final spacing_km={spacing_km:.2f}'
+        )
 
     async def generate(self, run_id: str, bbox: list[float], timesteps: list[int], hazard_types: list[str]):
-        self.storage.insert_run(run_id, bbox, timesteps)
+        await self.storage.insert_run(run_id, bbox, timesteps)
         stats = {'points_requested': 0, 'points_fetched': 0, 'cache_hits': 0}
         polygons_written: dict[str, int] = defaultdict(int)
         now = datetime.now(timezone.utc)
@@ -60,20 +66,36 @@ class HazardGenerator:
 
         try:
             samples_by_hour = defaultdict(list)
+            base_hour = now.replace(minute=0, second=0, microsecond=0)
+            expected_tss = [base_hour + timedelta(hours=h) for h in range(self.settings.forecast_hours + 1)]
             for lat, lon in points:
-                fetched = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
-                stats['points_fetched'] += 1
-                for record in fetched:
-                    ts = record['forecast_ts']
-                    cached = self.storage.get_sample(lat, lon, ts, self.settings.hazard_cache_ttl_min)
-                    if cached:
-                        stats['cache_hits'] += 1
-                        record = cached
-                    else:
-                        self.storage.upsert_sample(lat, lon, record)
-                    samples_by_hour[ts].append((lat, lon, record))
+                # Check cache for all expected forecast timestamps BEFORE calling the API.
+                cached_for_point: dict = {}
+                for ts in expected_tss:
+                    sample = await self.storage.get_sample(lat, lon, ts, self.settings.hazard_cache_ttl_min)
+                    if sample:
+                        cached_for_point[ts] = sample
 
-            self.storage.clear_hazards(run_id)
+                if len(cached_for_point) == len(expected_tss):
+                    # All needed samples are already cached; skip the upstream API call.
+                    stats['cache_hits'] += len(cached_for_point)
+                    for ts, rec in cached_for_point.items():
+                        samples_by_hour[ts].append((lat, lon, rec))
+                else:
+                    # Some samples are missing; fetch from the upstream API and cache results.
+                    fetched_records = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
+                    stats['points_fetched'] += 1
+                    for record in fetched_records:
+                        ts = record['forecast_ts']
+                        if ts in cached_for_point:
+                            # This timestamp was already in cache (partial coverage); prefer cached copy.
+                            stats['cache_hits'] += 1
+                            samples_by_hour[ts].append((lat, lon, cached_for_point[ts]))
+                        else:
+                            await self.storage.upsert_sample(lat, lon, record)
+                            samples_by_hour[ts].append((lat, lon, record))
+
+            await self.storage.clear_hazards(run_id)
             for timestep in timesteps:
                 target_ts = now + timedelta(hours=timestep)
                 if not samples_by_hour:
@@ -92,7 +114,7 @@ class HazardGenerator:
                         if prob > 0:
                             probs.append(prob)
                             wkt = _circle_wkt(lon, lat, (spacing_km / 2) / 111.0)
-                            self.storage.insert_hazard(
+                            await self.storage.insert_hazard(
                                 run_id, timestep, hazard_type, prob, target_key, bbox,
                                 {
                                     'WIND_THRESHOLD_KPH': self.settings.wind_threshold_kph,
@@ -103,8 +125,8 @@ class HazardGenerator:
                             )
                             polygons_written[f'{hazard_type}:{timestep}'] += 1
 
-            self.storage.complete_run(run_id, 'SUCCESS', stats)
+            await self.storage.complete_run(run_id, 'SUCCESS', stats)
             return {'run_id': run_id, 'status': 'SUCCESS', **stats, 'polygons_written_per_type_timestep': polygons_written}
         except Exception as exc:
-            self.storage.complete_run(run_id, 'FAILED', stats, str(exc))
+            await self.storage.complete_run(run_id, 'FAILED', stats, str(exc))
             raise
