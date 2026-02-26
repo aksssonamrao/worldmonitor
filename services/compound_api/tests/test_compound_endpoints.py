@@ -18,6 +18,7 @@ class FakeStorage:
         self.runs = []
         self.samples = {}
         self.events = []
+        self.incidents = []
         self.cache = {}
         self.cache_get_calls = 0
         self.cache_set_calls = 0
@@ -68,6 +69,27 @@ class FakeStorage:
             result.append(event)
         return result
 
+    async def list_incidents(self, since_hours, event_types=None, bbox=None):
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        result = []
+        for incident in self.incidents:
+            if incident['start_at'] < cutoff:
+                continue
+            if event_types and incident['event_type'] not in event_types:
+                continue
+            if bbox:
+                lon, lat = incident['geometry']['coordinates']
+                if not (bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]):
+                    continue
+            result.append(incident)
+        return result
+
+    async def get_incident(self, incident_id):
+        for incident in self.incidents:
+            if str(incident['id']) == incident_id:
+                return incident
+        return None
+
     async def get_event(self, event_id):
         for event in self.events:
             if str(event['id']) == event_id:
@@ -98,10 +120,9 @@ class FakeStorage:
             if best_score < score_threshold:
                 continue
             candidates.append({
-                'event_id': str(event['id']),
+                'incident_id': str(event['id']),
                 'title': event['title'],
-                'url': event['url'],
-                'event_type': event['event_type'],
+                                'event_type': event['event_type'],
                 'hazard_type': best_hazard['type'],
                 'hazard_prob': best_hazard['hazard_prob'],
                 'forecast_ts': best_hazard['forecast_ts'],
@@ -221,7 +242,7 @@ def test_compound_alert_generation(configured_app):
     assert response.status_code == 200
     features = response.json()['features']
     assert len(features) == 1
-    assert features[0]['properties']['event_id'] == str(event_id)
+    assert features[0]['properties']['incident_id'] == str(event_id)
 
 
 def test_dedup_multiple_hazards_and_invalid_event_id(configured_app):
@@ -344,3 +365,34 @@ def test_routes_options_and_score(configured_app, monkeypatch):
         },
     )
     assert invalid_time.status_code == 422
+
+
+def test_incidents_endpoints(configured_app):
+    app_obj, storage = configured_app
+    now = datetime.now(timezone.utc)
+    incident_id = uuid4()
+    storage.incidents.append({
+        'id': incident_id,
+        'canonical_title': 'Canonical flood incident',
+        'canonical_summary': None,
+        'event_type': 'DISASTER',
+        'subtype': 'FLOOD',
+        'severity': 0.8,
+        'confidence': 0.9,
+        'country': 'IN',
+        'start_at': now,
+        'end_at': now,
+        'geometry': {'type': 'Point', 'coordinates': [72.5, 8.5]},
+        'source_count': 2,
+        'sources': [{'title': 'a', 'url': 'https://example.com/a', 'source': 'gdelt', 'published_at': now, 'severity': 0.8, 'confidence': 0.7}]
+    })
+
+    client = TestClient(app_obj)
+    geo = client.get('/compound/incidents?since_hours=72')
+    assert geo.status_code == 200
+    assert len(geo.json()['features']) == 1
+
+    detail = client.get(f'/compound/incidents/{incident_id}')
+    assert detail.status_code == 200
+    assert detail.json()['id'] == str(incident_id)
+    assert len(detail.json()['sources']) == 1

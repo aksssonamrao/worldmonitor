@@ -257,6 +257,56 @@ async def get_event(event_id: str) -> dict[str, Any]:
     return event
 
 
+@app.get('/compound/incidents')
+async def get_incidents(
+    bbox: str | None = None,
+    since_hours: int = Query(default=72, ge=1, le=720),
+    types: str | None = None,
+) -> dict[str, Any]:
+    parsed_bbox = _parse_bbox(bbox)
+    type_list = [part.strip().upper() for part in types.split(',') if part.strip()] if types else None
+    incidents = await app.state.storage.list_incidents(since_hours=since_hours, event_types=type_list, bbox=parsed_bbox)
+    return {
+        'type': 'FeatureCollection',
+        'features': [
+            {
+                'type': 'Feature',
+                'geometry': incident['geometry'],
+                'properties': {
+                    'id': str(incident['id']),
+                    'canonical_title': incident['canonical_title'],
+                    'event_type': incident['event_type'],
+                    'subtype': incident['subtype'],
+                    'severity': incident['severity'],
+                    'confidence': incident['confidence'],
+                    'start_at': incident['start_at'].isoformat(),
+                    'source_count': incident['source_count'],
+                },
+            }
+            for incident in incidents
+        ],
+    }
+
+
+@app.get('/compound/incidents/{incident_id}')
+async def get_incident(incident_id: str) -> dict[str, Any]:
+    try:
+        parsed_incident_id = UUID(incident_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='invalid incident_id') from exc
+    incident = await app.state.storage.get_incident(str(parsed_incident_id))
+    if not incident:
+        raise HTTPException(status_code=404, detail='incident not found')
+    incident['id'] = str(incident['id'])
+    incident['start_at'] = incident['start_at'].isoformat()
+    incident['end_at'] = incident['end_at'].isoformat() if incident['end_at'] else None
+    incident['sources'] = [
+        {**source, 'published_at': source['published_at'].isoformat() if source.get('published_at') else None}
+        for source in incident.get('sources', [])
+    ]
+    return incident
+
+
 @app.get('/compound/alerts')
 async def get_alerts(
     timestep: int = Query(default=0, ge=0),
@@ -281,9 +331,8 @@ async def get_alerts(
                 'geometry': alert['geometry'],
                 'properties': {
                     'alert_type': 'COMPOUND',
-                    'event_id': alert['event_id'],
+                    'incident_id': alert['incident_id'],
                     'title': alert['title'],
-                    'url': alert['url'],
                     'event_type': alert['event_type'],
                     'hazard_type': alert['hazard_type'],
                     'hazard_prob': alert['hazard_prob'],

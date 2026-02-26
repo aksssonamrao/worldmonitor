@@ -222,6 +222,66 @@ class Storage:
         item['geometry'] = json.loads(item['geometry']) if isinstance(item['geometry'], str) else item['geometry']
         return item
 
+    async def list_incidents(self, since_hours: int, event_types: list[str] | None = None, bbox: list[float] | None = None) -> list[dict[str, Any]]:
+        filters = ["i.start_at >= NOW() - make_interval(hours => $1)"]
+        params: list[Any] = [since_hours]
+        if event_types:
+            params.append(event_types)
+            filters.append(f"i.event_type = ANY(${len(params)})")
+        if bbox:
+            params.extend(bbox)
+            start = len(params) - 3
+            filters.append(f"ST_Intersects(i.geom, ST_MakeEnvelope(${start}, ${start+1}, ${start+2}, ${start+3}, 4326)::geography)")
+        where = ' AND '.join(filters)
+        query = f"""
+            SELECT i.id, i.canonical_title, i.event_type, i.subtype, i.severity, i.confidence,
+                   i.start_at, i.country, COUNT(s.event_source_id) AS source_count,
+                   ST_AsGeoJSON(i.geom::geometry)::json AS geometry
+            FROM incidents i
+            LEFT JOIN incident_sources s ON s.incident_id = i.id
+            WHERE {where}
+            GROUP BY i.id
+            ORDER BY i.start_at DESC
+            LIMIT 500
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        out = []
+        for row in rows:
+            item = dict(row)
+            item['geometry'] = json.loads(item['geometry']) if isinstance(item['geometry'], str) else item['geometry']
+            out.append(item)
+        return out
+
+    async def get_incident(self, incident_id: str) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT i.id, i.canonical_title, i.canonical_summary, i.event_type, i.subtype,
+                       i.severity, i.confidence, i.country, i.start_at, i.end_at,
+                       ST_AsGeoJSON(i.geom::geometry)::json AS geometry
+                FROM incidents i
+                WHERE i.id = $1::uuid
+                """,
+                incident_id,
+            )
+            if row is None:
+                return None
+            sources = await conn.fetch(
+                """
+                SELECT es.title, es.url, es.source, es.published_at, es.severity, es.confidence
+                FROM incident_sources s
+                JOIN event_sources es ON es.id = s.event_source_id
+                WHERE s.incident_id = $1::uuid
+                ORDER BY es.confidence DESC, es.published_at DESC
+                """,
+                incident_id,
+            )
+        item = dict(row)
+        item['geometry'] = json.loads(item['geometry']) if isinstance(item['geometry'], str) else item['geometry']
+        item['sources'] = [dict(s) for s in sources]
+        return item
+
     async def list_ingestion_state(self) -> dict[str, Any]:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch("SELECT source, cursor, updated_at FROM ingestion_state")
@@ -245,14 +305,14 @@ class Storage:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT e.id as event_id, e.title, e.url, e.event_type, e.severity, e.confidence,
-                       e.country, e.occurred_at,
+                SELECT i.id as incident_id, i.canonical_title as title, i.event_type, i.severity, i.confidence,
+                       i.country, i.start_at as occurred_at,
                        h.type as hazard_type, h.hazard_prob, h.forecast_ts,
-                       ST_AsGeoJSON(e.geom::geometry)::json AS geometry
-                FROM events e
+                       ST_AsGeoJSON(i.geom::geometry)::json AS geometry
+                FROM incidents i
                 JOIN hazards h ON h.run_id = $1 AND h.timestep = $2
-                WHERE e.occurred_at >= NOW() - make_interval(hours => $3)
-                  AND ST_Intersects(h.geom, e.geom)
+                WHERE i.start_at >= NOW() - make_interval(hours => $3)
+                  AND ST_Intersects(h.geom, i.geom)
                   {bbox_filter}
                 """,
                 *params,
@@ -264,9 +324,8 @@ class Storage:
                 base = row['severity'] * row['confidence'] * row['hazard_prob']
                 score = max(0.0, min(100.0, base * event_weights.get(event_type, 1.0) * 100.0))
                 payload = {
-                    'event_id': str(row['event_id']),
+                    'incident_id': str(row['incident_id']),
                     'title': row['title'],
-                    'url': row['url'],
                     'event_type': event_type,
                     'hazard_type': row['hazard_type'],
                     'hazard_prob': row['hazard_prob'],
@@ -284,17 +343,30 @@ class Storage:
                         'other_hazards': [],
                     },
                 }
-                current = best_by_event.get(payload['event_id'])
+                current = best_by_event.get(payload['incident_id'])
                 if current is None or payload['score'] > current['score']:
                     if current is not None:
                         payload['details']['other_hazards'] = current['details']['other_hazards'] + [
                             {'hazard_type': current['hazard_type'], 'hazard_prob': current['hazard_prob'], 'score': current['score']}
                         ]
-                    best_by_event[payload['event_id']] = payload
+                    best_by_event[payload['incident_id']] = payload
                 else:
                     current['details']['other_hazards'].append({'hazard_type': payload['hazard_type'], 'hazard_prob': payload['hazard_prob'], 'score': payload['score']})
 
             results = [item for item in best_by_event.values() if item['score'] >= score_threshold]
+            for alert in results:
+                source_rows = await conn.fetch(
+                    """
+                    SELECT es.url
+                    FROM incident_sources s
+                    JOIN event_sources es ON es.id = s.event_source_id
+                    WHERE s.incident_id = $1::uuid
+                    ORDER BY es.confidence DESC, es.published_at DESC
+                    LIMIT 3
+                    """,
+                    alert['incident_id'],
+                )
+                alert['details']['source_links'] = [r['url'] for r in source_rows if r['url']]
             async with conn.transaction():
                 await conn.execute('DELETE FROM compound_alerts WHERE run_id = $1 AND timestep = $2', run_id, timestep)
                 for alert in results:
@@ -307,9 +379,9 @@ class Storage:
                         raise RuntimeError(f"Invalid geometry for alert event_id={alert.get('event_id')}: {exc}") from exc
                     await conn.execute(
                         """
-                        INSERT INTO compound_alerts (run_id, timestep, score, event_id, hazard_type, hazard_prob, forecast_ts, geom, details)
-                        VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, ST_SetSRID(ST_GeomFromGeoJSON($8), 4326)::geography, $9::jsonb)
-                        ON CONFLICT (run_id, timestep, event_id)
+                        INSERT INTO compound_alerts (run_id, timestep, score, event_id, incident_id, hazard_type, hazard_prob, forecast_ts, geom, details)
+                        VALUES ($1, $2, $3, NULL, $4::uuid, $5, $6, $7, ST_SetSRID(ST_GeomFromGeoJSON($8), 4326)::geography, $9::jsonb)
+                        ON CONFLICT (run_id, timestep, incident_id)
                         DO UPDATE SET score = EXCLUDED.score, hazard_type = EXCLUDED.hazard_type,
                                       hazard_prob = EXCLUDED.hazard_prob, forecast_ts = EXCLUDED.forecast_ts,
                                       geom = EXCLUDED.geom, details = EXCLUDED.details, created_at = NOW()
@@ -317,7 +389,7 @@ class Storage:
                         run_id,
                         timestep,
                         alert['score'],
-                        alert['event_id'],
+                        alert['incident_id'],
                         alert['hazard_type'],
                         alert['hazard_prob'],
                         alert['forecast_ts'],
