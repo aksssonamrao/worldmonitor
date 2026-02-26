@@ -17,7 +17,7 @@ def test_rate_limit_and_retry(monkeypatch):
     client = GoogleWeatherClient('https://weather.googleapis.com/v1', 'abc', max_qps=1000)
     calls = {'n': 0}
 
-    async def fake_get(*args, **kwargs):
+    async def fake_get(*args, **_):
         calls['n'] += 1
         if calls['n'] == 1:
             return httpx.Response(429, request=httpx.Request('GET', args[0]), json={'error': 'rate'})

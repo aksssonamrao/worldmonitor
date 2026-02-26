@@ -40,10 +40,15 @@ export function fetchCompoundAlerts(timestep: number) {
   return fetchGeoJson('/compound/alerts', timestep);
 }
 
-export async function refreshCompoundHazards(bbox: [number, number, number, number], runId: string = 'latest') {
+export async function refreshCompoundHazards(
+  bbox: [number, number, number, number],
+  runId: string = 'latest',
+  timestepHours: number[] = [0, 6, 12, 24],
+  hazardTypes: string[] = ['WIND', 'RAIN', 'HEAT'],
+) {
   const response = await call('/compound/hazards/generate', {
     method: 'POST',
-    body: JSON.stringify({ run_id: runId, bbox, timestep_hours: [0, 6, 12, 24], hazard_types: ['WIND', 'RAIN', 'HEAT'] }),
+    body: JSON.stringify({ run_id: runId, bbox, timestep_hours: timestepHours, hazard_types: hazardTypes }),
   });
   if (!response.ok) throw new Error(`Hazard generation failed: ${response.status}`);
   return response.json();

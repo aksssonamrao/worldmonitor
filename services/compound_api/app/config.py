@@ -30,6 +30,24 @@ def _csv_ints(value: str, *, default: str) -> list[int]:
     return [int(part.strip()) for part in raw.split(',') if part.strip()]
 
 
+def _parse_float(name: str, raw: str | None, default: float) -> float:
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise RuntimeError(f"Invalid value for {name}: expected a float, got {raw!r}")
+
+
+def _parse_int(name: str, raw: str | None, default: int) -> int:
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise RuntimeError(f"Invalid value for {name}: expected an integer, got {raw!r}")
+
+
 def _bbox(value: str, *, default: str) -> tuple[float, float, float, float]:
     raw = value or default
     parts = [float(part.strip()) for part in raw.split(',') if part.strip()]
@@ -61,18 +79,18 @@ def load_settings() -> Settings:
         database_url=database_url,
         google_weather_api_key=google_weather_api_key,
         google_weather_base_url=getenv('GOOGLE_WEATHER_BASE_URL', 'https://weather.googleapis.com/v1').rstrip('/'),
-        hazard_grid_km=float(getenv('HAZARD_GRID_KM', '25')),
-        hazard_max_points=int(getenv('HAZARD_MAX_POINTS', '300')),
-        hazard_cache_ttl_min=int(getenv('HAZARD_CACHE_TTL_MIN', '60')),
-        wind_threshold_kph=float(getenv('WIND_THRESHOLD_KPH', '50')),
-        wind_max_kph=float(getenv('WIND_MAX_KPH', '120')),
-        rain_threshold_mm_hr=float(getenv('RAIN_THRESHOLD_MM_HR', '10')),
-        rain_max_mm_hr=float(getenv('RAIN_MAX_MM_HR', '50')),
-        heat_threshold_c=float(getenv('HEAT_THRESHOLD_C', '38')),
-        heat_max_c=float(getenv('HEAT_MAX_C', '48')),
-        forecast_hours=int(getenv('FORECAST_HOURS', '72')),
+        hazard_grid_km=_parse_float('HAZARD_GRID_KM', getenv('HAZARD_GRID_KM'), 25.0),
+        hazard_max_points=_parse_int('HAZARD_MAX_POINTS', getenv('HAZARD_MAX_POINTS'), 300),
+        hazard_cache_ttl_min=_parse_int('HAZARD_CACHE_TTL_MIN', getenv('HAZARD_CACHE_TTL_MIN'), 60),
+        wind_threshold_kph=_parse_float('WIND_THRESHOLD_KPH', getenv('WIND_THRESHOLD_KPH'), 50.0),
+        wind_max_kph=_parse_float('WIND_MAX_KPH', getenv('WIND_MAX_KPH'), 120.0),
+        rain_threshold_mm_hr=_parse_float('RAIN_THRESHOLD_MM_HR', getenv('RAIN_THRESHOLD_MM_HR'), 10.0),
+        rain_max_mm_hr=_parse_float('RAIN_MAX_MM_HR', getenv('RAIN_MAX_MM_HR'), 50.0),
+        heat_threshold_c=_parse_float('HEAT_THRESHOLD_C', getenv('HEAT_THRESHOLD_C'), 38.0),
+        heat_max_c=_parse_float('HEAT_MAX_C', getenv('HEAT_MAX_C'), 48.0),
+        forecast_hours=_parse_int('FORECAST_HOURS', getenv('FORECAST_HOURS'), 72),
         timestep_hours=_csv_ints(getenv('TIMESTEP_HOURS', ''), default='0,6,12,24,48,72'),
         default_bbox=_bbox(getenv('DEFAULT_BBOX', ''), default='72.0,8.0,88.0,23.0'),
-        max_bbox_area_deg2=float(getenv('MAX_BBOX_AREA_DEG2', '50')),
-        max_qps=float(getenv('MAX_QPS', '5')),
+        max_bbox_area_deg2=_parse_float('MAX_BBOX_AREA_DEG2', getenv('MAX_BBOX_AREA_DEG2'), 50.0),
+        max_qps=_parse_float('MAX_QPS', getenv('MAX_QPS'), 5.0),
     )

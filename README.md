@@ -628,7 +628,7 @@ Compound API now uses Google Maps Platform Weather API as the only hazard provid
 Recommended bbox: keep map zoomed to regional scope; requests with area larger than `MAX_BBOX_AREA_DEG2` are rejected.
 
 ### Quota/cost safety
-- Client-side rate limiting (`MAX_QPS`, default 5).
+- Server-side/backend rate limiting (`MAX_QPS`, default 5) — enforced by the compound-api weather client.
 - Retry with backoff on 429/5xx.
 - Forecast sample cache (`weather_samples`) with TTL (`HAZARD_CACHE_TTL_MIN`) to avoid duplicate database writes for the same forecast window (does not reduce upstream Weather API calls).
 - Grid point cap (`HAZARD_MAX_POINTS`) with auto-spacing increase.

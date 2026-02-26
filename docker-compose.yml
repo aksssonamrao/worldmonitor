@@ -21,7 +21,7 @@ services:
       context: ./services/compound_api
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      GOOGLE_WEATHER_API_KEY: ${GOOGLE_WEATHER_API_KEY}
+      GOOGLE_WEATHER_API_KEY: ${GOOGLE_WEATHER_API_KEY:?GOOGLE_WEATHER_API_KEY not set}
       GOOGLE_WEATHER_BASE_URL: ${GOOGLE_WEATHER_BASE_URL:-https://weather.googleapis.com/v1}
       HAZARD_GRID_KM: ${HAZARD_GRID_KM:-25}
       HAZARD_MAX_POINTS: ${HAZARD_MAX_POINTS:-300}
