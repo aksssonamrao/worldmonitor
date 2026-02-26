@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -324,3 +325,227 @@ class Storage:
                         json.dumps(alert['details']),
                     )
         return sorted(results, key=lambda x: x['score'], reverse=True)
+
+    def _normalize_route_payload(self, payload: Any) -> dict[str, Any] | None:
+        if payload is None:
+            return None
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            return None
+
+        if isinstance(payload.get('geometry'), str):
+            payload['geometry'] = json.loads(payload['geometry'])
+
+        segment_scores = payload.get('segment_scores')
+        if isinstance(segment_scores, list):
+            for segment in segment_scores:
+                if isinstance(segment, dict) and isinstance(segment.get('geometry'), str):
+                    segment['geometry'] = json.loads(segment['geometry'])
+
+        top_evidence = payload.get('top_evidence')
+        if isinstance(top_evidence, dict):
+            for bucket in ('events', 'alerts', 'hazards'):
+                entries = top_evidence.get(bucket)
+                if isinstance(entries, list):
+                    for item in entries:
+                        if isinstance(item, dict) and isinstance(item.get('geometry'), str):
+                            item['geometry'] = json.loads(item['geometry'])
+        return payload
+
+    async def get_route_score_cache(self, route_hash: str, time_bucket: str) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT payload
+                FROM route_score_cache
+                WHERE route_hash = $1 AND time_bucket = $2
+                """,
+                route_hash,
+                time_bucket,
+            )
+        if not row:
+            return None
+        return self._normalize_route_payload(row['payload'])
+
+    async def set_route_score_cache(self, route_hash: str, time_bucket: str, payload: dict[str, Any]) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO route_score_cache (route_hash, time_bucket, payload, created_at)
+                VALUES ($1, $2, $3::jsonb, NOW())
+                ON CONFLICT (route_hash, time_bucket)
+                DO UPDATE SET payload = EXCLUDED.payload, created_at = NOW()
+                """,
+                route_hash,
+                time_bucket,
+                json.dumps(payload),
+            )
+
+    async def score_route_corridor(
+        self,
+        geometry: dict[str, Any],
+        lookback_hours: int,
+        run_id: str,
+        timestep: int,
+        depart_time: datetime,
+        arrive_by: datetime,
+        buffer_meters: float = 15000,
+    ) -> dict[str, Any]:
+        route_json = json.dumps(geometry, sort_keys=True)
+        cache_material = {
+            'geometry': geometry,
+            'lookback_hours': lookback_hours,
+            'run_id': run_id,
+            'timestep': timestep,
+            'buffer_meters': buffer_meters,
+            'depart_time': depart_time.isoformat(),
+            'arrive_by': arrive_by.isoformat(),
+        }
+        route_hash = hashlib.sha256(json.dumps(cache_material, sort_keys=True).encode('utf-8')).hexdigest()
+        time_bucket = datetime.utcnow().strftime('%Y%m%d%H')
+        cached = await self.get_route_score_cache(route_hash, time_bucket)
+        if cached:
+            return cached
+
+        async with self._pool.acquire() as conn:
+            events = await conn.fetch(
+                """
+                WITH route AS (
+                    SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)::geography AS geom
+                )
+                SELECT id, title, event_type, severity, confidence, url, occurred_at,
+                       ST_AsGeoJSON(geom::geometry)::json AS geometry,
+                       ST_Distance(e.geom, r.geom) AS distance_m
+                FROM events e
+                CROSS JOIN route r
+                WHERE e.occurred_at >= NOW() - make_interval(hours => $2)
+                  AND ST_Intersects(ST_Buffer(r.geom, $3), e.geom)
+                ORDER BY distance_m ASC
+                LIMIT 25
+                """,
+                route_json,
+                lookback_hours,
+                buffer_meters,
+            )
+            hazards = await conn.fetch(
+                """
+                WITH route AS (
+                    SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)::geography AS geom
+                )
+                SELECT h.id, h.type, h.hazard_prob,
+                       ST_AsGeoJSON(h.geom::geometry)::json AS geometry
+                FROM hazards h
+                CROSS JOIN route r
+                WHERE h.run_id = $2 AND h.timestep = $3
+                  AND ST_Intersects(ST_Buffer(r.geom, $4), h.geom)
+                LIMIT 25
+                """,
+                route_json,
+                run_id,
+                timestep,
+                buffer_meters,
+            )
+            alerts = await conn.fetch(
+                """
+                WITH route AS (
+                    SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)::geography AS geom
+                )
+                SELECT c.event_id, c.score, c.hazard_type, c.hazard_prob,
+                       e.title, e.url,
+                       ST_AsGeoJSON(c.geom::geometry)::json AS geometry
+                FROM compound_alerts c
+                JOIN events e ON e.id = c.event_id
+                CROSS JOIN route r
+                WHERE c.run_id = $2 AND c.timestep = $3
+                  AND ST_Intersects(ST_Buffer(r.geom, $4), c.geom)
+                ORDER BY c.score DESC
+                LIMIT 25
+                """,
+                route_json,
+                run_id,
+                timestep,
+                buffer_meters,
+            )
+            segs = await conn.fetch(
+                """
+                WITH route AS (
+                    SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)::geography AS geom
+                ),
+                points AS (
+                    SELECT i,
+                           ST_LineInterpolatePoint((r.geom::geometry), i / 20.0)::geography AS a,
+                           ST_LineInterpolatePoint((r.geom::geometry), (i+1) / 20.0)::geography AS b
+                    FROM route r, generate_series(0, 19) i
+                ),
+                segments AS (
+                    SELECT
+                        i,
+                        ST_MakeLine(a::geometry, b::geometry)::geography AS segment_line,
+                        ST_Buffer(ST_MakeLine(a::geometry, b::geometry)::geography, $4) AS segment_buffer
+                    FROM points
+                ),
+                hazard_stats AS (
+                    SELECT s.i, AVG(h.hazard_prob) * 100.0 AS hazard_avg
+                    FROM segments s
+                    LEFT JOIN hazards h ON h.run_id = $2
+                        AND h.timestep = $3
+                        AND ST_Intersects(s.segment_buffer, h.geom)
+                    GROUP BY s.i
+                ),
+                event_stats AS (
+                    SELECT s.i, AVG(e.severity * e.confidence) * 100.0 AS event_avg
+                    FROM segments s
+                    LEFT JOIN events e ON e.occurred_at >= NOW() - make_interval(hours => $5)
+                        AND ST_Intersects(s.segment_buffer, e.geom)
+                    GROUP BY s.i
+                )
+                SELECT s.i,
+                    LEAST(100.0,
+                        COALESCE(hs.hazard_avg, 0) * 0.6 +
+                        COALESCE(es.event_avg, 0) * 0.4
+                    ) AS score,
+                    ST_AsGeoJSON(s.segment_line::geometry)::json AS geometry
+                FROM segments s
+                LEFT JOIN hazard_stats hs ON hs.i = s.i
+                LEFT JOIN event_stats es ON es.i = s.i
+                ORDER BY s.i ASC
+                """,
+                route_json,
+                run_id,
+                timestep,
+                buffer_meters,
+                lookback_hours,
+            )
+
+        weather_score = min(100.0, sum(float(h['hazard_prob']) for h in hazards) * 12.0)
+        news_score = min(100.0, sum(float(e['severity']) * float(e['confidence']) for e in events) * 10.0)
+        compound_score = min(100.0, sum(float(a['score']) for a in alerts) / max(1, len(alerts))) if alerts else 0.0
+        total = min(100.0, weather_score * 0.4 + news_score * 0.3 + compound_score * 0.3)
+        payload = {
+            'total_risk': round(total, 3),
+            'summary_risk': {
+                'weather': round(weather_score, 3),
+                'news': round(news_score, 3),
+                'compound': round(compound_score, 3),
+                'total': round(total, 3),
+            },
+            'segment_scores': [
+                {
+                    'segment_index': row['i'],
+                    'score': float(row['score']),
+                    'weather': float(row['score']) * 0.6,
+                    'news': float(row['score']) * 0.25,
+                    'compound': float(row['score']) * 0.15,
+                    'geometry': row['geometry'],
+                }
+                for row in segs
+            ],
+            'top_evidence': {
+                'events': [dict(id=str(r['id']), title=r['title'], event_type=r['event_type'], severity=r['severity'], confidence=r['confidence'], url=r['url'], occurred_at=r['occurred_at'].isoformat(), geometry=r['geometry']) for r in events[:10]],
+                'alerts': [dict(id=str(r['event_id']), title=r['title'], score=r['score'], hazard_type=r['hazard_type'], hazard_prob=r['hazard_prob'], url=r['url'], geometry=r['geometry']) for r in alerts[:10]],
+                'hazards': [dict(id=str(r['id']), type=r['type'], hazard_prob=r['hazard_prob'], geometry=r['geometry']) for r in hazards[:10]],
+            },
+        }
+        await self.set_route_score_cache(route_hash, time_bucket, payload)
+        return payload

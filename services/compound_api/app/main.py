@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from os import getenv
 from typing import Any
 from uuid import UUID
+from pydantic import BaseModel, Field
 
 from fastapi import FastAPI, HTTPException, Query
 
@@ -64,6 +65,27 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title='Compound API', lifespan=lifespan)
 
 
+class PointIn(BaseModel):
+    lat: float
+    lon: float
+
+
+class RouteOptionsIn(BaseModel):
+    origin: PointIn
+    destination: PointIn
+    depart_time: str
+    arrive_by: str
+    risk_appetite: float = Field(ge=0, le=1)
+
+
+class RouteScoreIn(BaseModel):
+    geometry: dict[str, Any]
+    depart_time: str
+    arrive_by: str
+    run_id: str = 'latest'
+    timestep: int = 0
+
+
 def _parse_bbox(raw_bbox: str | None) -> list[float] | None:
     if not raw_bbox:
         return None
@@ -86,6 +108,16 @@ async def _run_id_param(run_id: str | None) -> str:
     if not latest:
         raise HTTPException(status_code=404, detail='no hazard runs')
     return latest['run_id']
+
+
+def _parse_route_datetime(raw_value: str, field_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f'{field_name} must be a valid ISO-8601 datetime') from exc
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=422, detail=f'{field_name} must include timezone information')
+    return parsed
 
 
 @app.get('/compound/health')
@@ -253,3 +285,92 @@ async def latest_run() -> dict[str, Any]:
     if not run:
         raise HTTPException(status_code=404, detail='no hazard runs')
     return run
+
+
+def _line_option(origin: PointIn, destination: PointIn, bend: float) -> dict[str, Any]:
+    mid_lon = (origin.lon + destination.lon) / 2.0
+    mid_lat = (origin.lat + destination.lat) / 2.0
+    dx = destination.lon - origin.lon
+    dy = destination.lat - origin.lat
+    normal_lon = -dy
+    normal_lat = dx
+    norm = max((normal_lon**2 + normal_lat**2) ** 0.5, 1e-6)
+    offset_lon = (normal_lon / norm) * bend
+    offset_lat = (normal_lat / norm) * bend
+    return {
+        'type': 'LineString',
+        'coordinates': [
+            [origin.lon, origin.lat],
+            [mid_lon + offset_lon, mid_lat + offset_lat],
+            [destination.lon, destination.lat],
+        ],
+    }
+
+
+def _distance_km(origin: PointIn, destination: PointIn) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    r = 6371.0
+    p1, p2 = radians(origin.lat), radians(destination.lat)
+    dphi = radians(destination.lat - origin.lat)
+    dlambda = radians(destination.lon - origin.lon)
+    a = sin(dphi / 2) ** 2 + cos(p1) * cos(p2) * sin(dlambda / 2) ** 2
+    return 2 * r * asin(sqrt(a))
+
+
+@app.post('/routes/options')
+async def route_options(body: RouteOptionsIn) -> dict[str, Any]:
+    depart_time = _parse_route_datetime(body.depart_time, 'depart_time')
+    arrive_by = _parse_route_datetime(body.arrive_by, 'arrive_by')
+    if depart_time >= arrive_by:
+        raise HTTPException(status_code=422, detail='depart_time must be before arrive_by')
+
+    base_distance = _distance_km(body.origin, body.destination)
+    options = [
+        {'id': 'fastest', 'name': 'Fastest', 'geometry': _line_option(body.origin, body.destination, 0.0), 'distance_factor': 1.0, 'eta_factor': 1.0},
+        {'id': 'balanced', 'name': 'Balanced', 'geometry': _line_option(body.origin, body.destination, 0.9), 'distance_factor': 1.08, 'eta_factor': 1.12},
+        {'id': 'safest', 'name': 'Safest', 'geometry': _line_option(body.origin, body.destination, -1.1), 'distance_factor': 1.16, 'eta_factor': 1.25},
+    ]
+    scored = []
+    run_id = await _run_id_param('latest')
+    for item in options:
+        score = await app.state.storage.score_route_corridor(
+            item['geometry'],
+            app.state.settings.event_lookback_hours,
+            run_id,
+            0,
+            depart_time,
+            arrive_by,
+        )
+        risk_bias = {'fastest': 1.1, 'balanced': 1.0, 'safest': 0.82}[item['id']]
+        summary = dict(score['summary_risk'])
+        summary['total'] = round(min(100.0, summary['total'] * risk_bias * (1.1 - body.risk_appetite * 0.2)), 3)
+        scored.append(
+            {
+                'id': item['id'],
+                'name': item['name'],
+                'geometry': item['geometry'],
+                'distance_km': round(base_distance * item['distance_factor'], 3),
+                'eta_hours': round((base_distance / 55.0) * item['eta_factor'], 3),
+                'summary_risk': summary,
+            }
+        )
+    return {'routes': scored}
+
+
+@app.post('/routes/score')
+async def route_score(body: RouteScoreIn) -> dict[str, Any]:
+    depart_time = _parse_route_datetime(body.depart_time, 'depart_time')
+    arrive_by = _parse_route_datetime(body.arrive_by, 'arrive_by')
+    if depart_time >= arrive_by:
+        raise HTTPException(status_code=422, detail='depart_time must be before arrive_by')
+
+    run_id = await _run_id_param(body.run_id)
+    return await app.state.storage.score_route_corridor(
+        geometry=body.geometry,
+        lookback_hours=app.state.settings.event_lookback_hours,
+        run_id=run_id,
+        timestep=body.timestep,
+        depart_time=depart_time,
+        arrive_by=arrive_by,
+    )

@@ -66,6 +66,7 @@ class PlanRequest(BaseModel):
     jobs: list[JobIn]
     objective_weights: ObjectiveWeightsIn = ObjectiveWeightsIn()
     risk_model: RiskModelIn = RiskModelIn()
+    selected_route_geometry: dict[str, Any] | None = None
 
 
 @app.get('/health')
@@ -284,6 +285,7 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
                 'assumptions': ['Straight-line distance approximation', 'Deterministic OR-Tools configuration'],
             },
             'llm_summary': None,
+            'selected_route_geometry': request.selected_route_geometry,
         }
 
     routes = []
@@ -352,6 +354,29 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
             'assumptions': ['Straight-line haversine distance', 'Fixed average speed of 40 km/h', 'Polygon-sampling risk model'],
         },
         'llm_summary': None,
+        'selected_route_geometry': request.selected_route_geometry,
     }
     plan_result['llm_summary'] = _llm_summary(plan_result, request)
     return plan_result
+
+
+class AgentBriefIn(BaseModel):
+    shipment: dict[str, Any]
+    selected_route_id: str
+    route_metrics: dict[str, Any] = Field(default_factory=dict)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post('/agent/brief')
+def agent_brief(request: AgentBriefIn) -> dict[str, Any]:
+    citations = request.citations or [{'title': 'Compound API route score', 'url': 'http://compound_api:8090/routes/score'}]
+    markdown = (
+        f"## Shipment Decision Brief\n"
+        f"- Selected route: **{request.selected_route_id}**\n"
+        f"- Origin: {request.shipment.get('origin')}\n"
+        f"- Destination: {request.shipment.get('destination')}\n"
+        f"- Depart / Arrive: {request.shipment.get('depart_time')} -> {request.shipment.get('arrive_by')}\n"
+        f"- Key metrics: `{request.route_metrics}`\n\n"
+        "This brief is generated from deterministic planner and corridor-scoped risk outputs."
+    )
+    return {'markdown': markdown, 'citations': citations}
