@@ -390,6 +390,13 @@ export class MapContainer {
     }
   }
 
+  public loadCompoundRiskData(): Promise<void> | undefined {
+    if (this.useDeckGL) {
+      return this.deckGLMap?.loadCompoundRiskData();
+    }
+    return undefined;
+  }
+
   public flashAssets(assetType: AssetType, ids: string[]): void {
     if (this.useDeckGL) {
       this.deckGLMap?.flashAssets(assetType, ids);

@@ -11433,8 +11433,11 @@ body.has-critical-banner .panels-grid {
   position: absolute;
   right: 16px;
   top: 170px;
+  bottom: 16px;
   z-index: 31;
   width: 280px;
+  max-height: calc(100% - 186px);
+  overflow-y: auto;
   background: rgba(10, 18, 24, 0.92);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 8px;
@@ -11457,4 +11460,21 @@ body.has-critical-banner .panels-grid {
   padding: 4px 6px;
   border-radius: 4px;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.compound-alert-item:hover {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.25);
+}
+.compound-alert-item:active {
+  background: rgba(255,255,255,0.18);
+}
+.compound-alert-item:focus,
+.compound-alert-item:focus-visible {
+  outline: 2px solid rgba(143,211,255,0.8);
+  outline-offset: 1px;
+}
+.compound-alert-item.selected {
+  background: rgba(143,211,255,0.15);
+  border-color: rgba(143,211,255,0.5);
 }

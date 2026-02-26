@@ -2219,6 +2219,9 @@ export class App {
           await this.loadTechEvents();
           console.log('[loadDataForLayer] techEvents loaded');
           break;
+        case 'compoundRisk':
+          await this.map?.loadCompoundRiskData();
+          break;
       }
     } finally {
       this.inFlight.delete(layer);

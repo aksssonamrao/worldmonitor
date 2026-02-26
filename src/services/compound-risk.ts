@@ -24,7 +24,20 @@ async function fetchGeoJson(path: string, timestep: number): Promise<FeatureColl
 
   const ts = Math.max(0, Math.min(2, Math.floor(timestep)));
   const url = `${COMPOUND_API_URL}${path}?timestep=${ts}`;
-  const response = await fetch(url);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Compound API request timed out after 5 seconds`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     throw new Error(`Compound API request failed: ${response.status}`);
   }
