@@ -8,7 +8,9 @@ import httpx
 
 class TokenBucket:
     def __init__(self, rate: float):
-        self._interval = 1 / max(rate, 0.1)
+        if rate <= 0:
+            raise ValueError(f"TokenBucket rate must be positive, got {rate!r}")
+        self._interval = 1.0 / rate
         self._lock = asyncio.Lock()
         self._next = 0.0
 
