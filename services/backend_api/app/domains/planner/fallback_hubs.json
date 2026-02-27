@@ -1,0 +1,7 @@
+[
+  {"id": "LAX", "label": "Los Angeles Logistics Node", "lat": 34.0522, "lon": -118.2437},
+  {"id": "ORD", "label": "Chicago Logistics Node", "lat": 41.8781, "lon": -87.6298},
+  {"id": "DFW", "label": "Dallas/Fort Worth Logistics Node", "lat": 32.8998, "lon": -97.0403},
+  {"id": "ATL", "label": "Atlanta Logistics Node", "lat": 33.6407, "lon": -84.4277},
+  {"id": "NYC", "label": "New York Logistics Node", "lat": 40.7128, "lon": -74.006}
+]

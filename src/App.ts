@@ -182,10 +182,10 @@ export class App {
     const depart = this.parseDateInput((this.container.querySelector('#depart') as HTMLInputElement).value, 'Depart time');
     const arrive = this.parseDateInput((this.container.querySelector('#arrive') as HTMLInputElement).value, 'Arrive by');
     const risk = Number((this.container.querySelector('#risk') as HTMLInputElement).value);
-    const api = this.getCompoundApiBase();
+    const api = this.getApiBase();
     const payload = { origin, destination, depart_time: depart, arrive_by: arrive, risk_appetite: risk };
 
-    const options = await this.safeFetchJson<{ routes: RouteOption[] }>(`${api}/routes/options`, {
+    const options = await this.safeFetchJson<{ routes: RouteOption[] }>(`${api}/api/routes/options`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -198,7 +198,7 @@ export class App {
     this.routes = options.routes;
     this.scoreByRoute.clear();
     for (const route of this.routes) {
-      const score = await this.safeFetchJson<RouteScore>(`${api}/routes/score`, {
+      const score = await this.safeFetchJson<RouteScore>(`${api}/api/routes/score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ geometry: route.geometry, depart_time: depart, arrive_by: arrive }),
@@ -373,10 +373,6 @@ export class App {
   }
 
 
-  private getPlannerApiBase(): string {
-    return (import.meta.env.VITE_PLANNER_API_URL || 'http://localhost:8091').replace(/\/$/, '');
-  }
-
   private async runMitigation(): Promise<void> {
     if (!this.selectedRouteId) throw new Error('Select a route first');
     const route = this.routes.find((item) => item.id === this.selectedRouteId);
@@ -386,7 +382,7 @@ export class App {
     const depart = this.parseDateInput((this.container.querySelector('#depart') as HTMLInputElement).value, 'Depart time');
     const arrive = this.parseDateInput((this.container.querySelector('#arrive') as HTMLInputElement).value, 'Arrive by');
     const risk = Number((this.container.querySelector('#risk') as HTMLInputElement).value);
-    const response = await this.safeFetchJson<MitigationResponse>(`${this.getPlannerApiBase()}/agent/mitigation`, {
+    const response = await this.safeFetchJson<MitigationResponse>(`${this.getApiBase()}/api/agent/mitigation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shipment: { origin, destination, depart_time: depart, arrive_by: arrive, mode: 'auto', risk_appetite: risk }, selected_route: { id: route.id, geometry: route.geometry } }),
@@ -482,7 +478,7 @@ export class App {
   }
 
   private async loadEvidenceLayers(): Promise<void> {
-    const api = this.getCompoundApiBase();
+    const api = this.getApiBase();
     const [incidents, alerts, hazards] = await Promise.all([
       this.safeFetchJson<FeatureCollection>(`${api}/compound/incidents?since_hours=72`),
       this.safeFetchJson<FeatureCollection>(`${api}/compound/alerts?run_id=latest&timestep=0`),
@@ -499,8 +495,8 @@ export class App {
   }
 
 
-  private getCompoundApiBase(): string {
-    return (import.meta.env.VITE_COMPOUND_API_URL || 'http://localhost:8090').replace(/\/$/, '');
+  private getApiBase(): string {
+    return (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/$/, '');
   }
 
   private async createAoiFromCenter(): Promise<void> {
@@ -511,12 +507,12 @@ export class App {
     const latRadians = (center.lat * Math.PI) / 180;
     const lonDelta = radiusKm / (111 * Math.max(Math.cos(latRadians), 0.01));
     const poly = { type: 'Polygon', coordinates: [[[center.lng - lonDelta, center.lat - latDelta], [center.lng + lonDelta, center.lat - latDelta], [center.lng + lonDelta, center.lat + latDelta], [center.lng - lonDelta, center.lat + latDelta], [center.lng - lonDelta, center.lat - latDelta]]] };
-    await this.safeFetchJson(`${this.getCompoundApiBase()}/aois`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, geometry: poly, country_tags: [] }) });
+    await this.safeFetchJson(`${this.getApiBase()}/aois`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, geometry: poly, country_tags: [] }) });
     await this.refreshWatchlists();
   }
 
   private async refreshWatchlists(): Promise<void> {
-    const aois = (await this.safeFetchJson<any[]>(`${this.getCompoundApiBase()}/aois`)) || [];
+    const aois = (await this.safeFetchJson<any[]>(`${this.getApiBase()}/aois`)) || [];
     const list = this.container.querySelector('#aoi-list') as HTMLElement;
     list.replaceChildren();
     this.aoiGeometries.clear();
@@ -550,13 +546,13 @@ export class App {
 
   private async createSnapshot(): Promise<void> {
     if (!this.selectedAoiId) return;
-    await this.safeFetchJson(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/snapshot`, { method: 'POST' });
+    await this.safeFetchJson(`${this.getApiBase()}/aois/${this.selectedAoiId}/snapshot`, { method: 'POST' });
     await this.refreshWatchlists();
   }
 
   private async refreshChanges(): Promise<void> {
     if (!this.selectedAoiId) return;
-    const changes = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
+    const changes = await this.safeFetchJson<any>(`${this.getApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
     const box = this.container.querySelector('#aoi-changes') as HTMLElement;
     box.replaceChildren();
     for (const item of (changes?.items || [])) {
@@ -574,10 +570,10 @@ export class App {
 
   private async generateMemo(): Promise<void> {
     if (!this.selectedAoiId) return;
-    const changes = await this.safeFetchJson<any>(`${this.getCompoundApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
+    const changes = await this.safeFetchJson<any>(`${this.getApiBase()}/aois/${this.selectedAoiId}/changes?since_hours=168`);
     const latest = changes?.items?.[0];
     const fallback = latest ? `AOI update: ${latest.delta.human_readable?.summary || 'No summary'}` : 'No recent AOI deltas';
-    const memo = await this.safeFetchJson<{ memo?: string }>(`${this.getCompoundApiBase()}/agent/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: fallback }) });
+    const memo = await this.safeFetchJson<{ memo?: string }>(`${this.getApiBase()}/api/agent/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: fallback }) });
     if (memo) {
       this.setStatus('Memo generated successfully');
     } else {

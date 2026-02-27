@@ -23,8 +23,8 @@ services:
     volumes:
       - ./valhalla_data:/data
     command: ["bash", "-lc", "valhalla_service /data/valhalla.json 1"]
-    ports:
-      - "8002:8002"
+    expose:
+      - "8002"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; body=b'{\\\"locations\\\":[{\\\"lat\\\":37.7749,\\\"lon\\\":-122.4194},{\\\"lat\\\":34.0522,\\\"lon\\\":-118.2437}],\\\"costing\\\":\\\"auto\\\"}'; req=urllib.request.Request('http://localhost:8002/route', data=body, headers={'Content-Type':'application/json'}); urllib.request.urlopen(req)\" || exit 1"]
       interval: 20s
@@ -32,29 +32,20 @@ services:
       retries: 5
       start_period: 30s
 
-  routing_api:
-    build:
-      context: ./services/routing_api
-    environment:
-      VALHALLA_URL: ${VALHALLA_URL:-http://valhalla:8002}
-    restart: unless-stopped
-    ports:
-      - "8093:8093"
-    depends_on:
-      valhalla:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8093/health')\" || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
 
-  compound_api:
+
+
+  backend_api:
     build:
-      context: ./services/compound_api
+      context: ./services/backend_api
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
+      RSS_CONFIG_PATH: ${RSS_CONFIG_PATH:-/app/config/rss_feeds.yml}
+      FOCUS_COUNTRIES: ${FOCUS_COUNTRIES:-IN,AE,GB,US}
+      FOCUS_REGIONS: ${FOCUS_REGIONS:-EUROPE}
+      RELIEFWEB_APPNAME: ${RELIEFWEB_APPNAME:-worldmonitor}
+      ROUTE_SCORE_CACHE_RETENTION_DAYS: ${ROUTE_SCORE_CACHE_RETENTION_DAYS:-30}
       GOOGLE_WEATHER_API_KEY: ${GOOGLE_WEATHER_API_KEY:?GOOGLE_WEATHER_API_KEY not set}
       GOOGLE_WEATHER_BASE_URL: ${GOOGLE_WEATHER_BASE_URL:-https://weather.googleapis.com/v1}
       HAZARD_GRID_KM: ${HAZARD_GRID_KM:-25}
@@ -71,92 +62,79 @@ services:
       DEFAULT_BBOX: ${DEFAULT_BBOX:-72.0,8.0,88.0,23.0}
       MAX_BBOX_AREA_DEG2: ${MAX_BBOX_AREA_DEG2:-50}
       MAX_QPS: ${MAX_QPS:-5}
-      EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
       ALERT_SCORE_THRESHOLD: ${ALERT_SCORE_THRESHOLD:-20}
       EVENT_TYPE_WEIGHTS_JSON: ${EVENT_TYPE_WEIGHTS_JSON:-{"PROTEST":1.2,"STRIKE":1.2,"CONFLICT":1.5,"DISASTER":1.4,"OUTAGE":1.3,"ACCIDENT":1.1,"OTHER":1.0}}
-      ROUTING_API_URL: ${ROUTING_API_URL:-http://routing_api:8093}
+      VALHALLA_URL: ${VALHALLA_URL:-http://valhalla:8002}
+      COMPOUND_API_URL: ${COMPOUND_API_URL_BACKEND:-http://localhost:8080}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      UPSTREAM_TIMEOUT_SECONDS: ${UPSTREAM_TIMEOUT_SECONDS:-20}
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "8080:8080"
     depends_on:
       postgis:
         condition: service_healthy
-      routing_api:
+      valhalla:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8090/compound/health')\" || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
 
-  ingestor:
+
+
+  scheduler:
     build:
-      context: ./services/ingestor
+      context: .
+      dockerfile: services/scheduler/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
+      RSS_CONFIG_PATH: ${RSS_CONFIG_PATH:-/app/config/rss_feeds.yml}
+      FOCUS_COUNTRIES: ${FOCUS_COUNTRIES:-IN,AE,GB,US}
+      FOCUS_REGIONS: ${FOCUS_REGIONS:-EUROPE}
+      RELIEFWEB_APPNAME: ${RELIEFWEB_APPNAME:-worldmonitor}
+      ROUTE_SCORE_CACHE_RETENTION_DAYS: ${ROUTE_SCORE_CACHE_RETENTION_DAYS:-30}
       INGEST_INTERVAL_MINUTES: ${INGEST_INTERVAL_MINUTES:-15}
       GDELT_ENABLED: ${GDELT_ENABLED:-true}
       RELIEFWEB_ENABLED: ${RELIEFWEB_ENABLED:-true}
       RSS_ENABLED: ${RSS_ENABLED:-false}
-      RSS_CONFIG_PATH: ${RSS_CONFIG_PATH:-/app/config/rss_feeds.yml}
-      FOCUS_COUNTRIES: ${FOCUS_COUNTRIES:-IN,AE,GB,US}
-      FOCUS_REGIONS: ${FOCUS_REGIONS:-EUROPE}
-      EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
-      COMPOUND_API_URL: ${COMPOUND_API_URL_BACKEND:-http://compound_api:8090}
     restart: unless-stopped
-    expose:
-      - "8092"
     depends_on:
       postgis:
         condition: service_healthy
-      compound_api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8092/ingestor/health')\" || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
 
-  planner:
+  worker:
     build:
-      context: ./services/planner
+      context: .
+      dockerfile: services/worker/Dockerfile
     environment:
-      VITE_COMPOUND_API_URL: ${VITE_COMPOUND_API_URL:-http://compound_api:8090}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
-      ROUTING_API_URL: ${ROUTING_API_URL:-http://routing_api:8093}
-      COMPOUND_API_URL: ${COMPOUND_API_URL_BACKEND:-http://compound_api:8090}
+      DATABASE_URL: ${DATABASE_URL}
+      EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
+      RSS_CONFIG_PATH: ${RSS_CONFIG_PATH:-/app/config/rss_feeds.yml}
+      FOCUS_COUNTRIES: ${FOCUS_COUNTRIES:-IN,AE,GB,US}
+      FOCUS_REGIONS: ${FOCUS_REGIONS:-EUROPE}
+      RELIEFWEB_APPNAME: ${RELIEFWEB_APPNAME:-worldmonitor}
+      ROUTE_SCORE_CACHE_RETENTION_DAYS: ${ROUTE_SCORE_CACHE_RETENTION_DAYS:-30}
     restart: unless-stopped
-    ports:
-      - "8091:8091"
     depends_on:
-      compound_api:
+      postgis:
         condition: service_healthy
-      routing_api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8091/health')\" || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        VITE_COMPOUND_API_URL: ${VITE_COMPOUND_API_URL:-http://localhost:8090}
-        VITE_PLANNER_API_URL: ${VITE_PLANNER_API_URL:-http://localhost:8091}
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
     ports:
       - "3000:3000"
     restart: unless-stopped
     depends_on:
-      compound_api:
-        condition: service_healthy
-      planner:
+      backend_api:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
