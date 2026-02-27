@@ -8,7 +8,20 @@ import asyncpg
 
 from app.providers.common import EventSourceCreate, compute_geohash, compute_simhash64, hamming_distance, incident_key, normalize_text, time_bucket
 
-SOURCE_PREFERENCE = {'reliefweb': 6, 'usgs': 5, 'firms': 4, 'planned': 3, 'rss': 2, 'gdelt': 1}
+SOURCE_PREFERENCE = {'reliefweb': 5, 'usgs': 4, 'planned': 3, 'rss': 2, 'gdelt': 1}
+
+
+def pick_incident_candidate(simhash: int, candidates: list[asyncpg.Record], max_distance: int):
+    best_id = None
+    best_dist = 999
+    for row in candidates:
+        dist = hamming_distance(simhash, int(row['representative_simhash64']))
+        if dist < best_dist:
+            best_dist = dist
+            best_id = row['id']
+    if best_id is None or best_dist > max_distance:
+        return None
+    return best_id
 
 
 class IngestStorage:
@@ -97,15 +110,9 @@ class IngestStorage:
                 """,
                 event.event_type, window_start, window_end, geoh,
             )
-            best_id = None
-            best_dist = 999
-            for row in candidates:
-                dist = hamming_distance(simhash, int(row['representative_simhash64']))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_id = row['id']
+            best_id = pick_incident_candidate(simhash, candidates, simhash_strong_max_dist)
 
-            if best_id is None or best_dist > simhash_strong_max_dist:
+            if best_id is None:
                 key = incident_key(event.event_type, event.subtype, geoh, bucket, normalized)
                 existing = await conn.fetchrow('SELECT id FROM incidents WHERE incident_key=$1', key)
                 if existing:

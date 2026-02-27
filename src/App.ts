@@ -448,18 +448,18 @@ export class App {
 
   private async loadEvidenceLayers(): Promise<void> {
     const api = this.getCompoundApiBase();
-    const [events, alerts, hazards] = await Promise.all([
-      this.safeFetchJson<FeatureCollection>(`${api}/compound/events?since_hours=72`),
+    const [incidents, alerts, hazards] = await Promise.all([
+      this.safeFetchJson<FeatureCollection>(`${api}/compound/incidents?since_hours=72`),
       this.safeFetchJson<FeatureCollection>(`${api}/compound/alerts?run_id=latest&timestep=0`),
       this.safeFetchJson<FeatureCollection>(`${api}/compound/hazards?run_id=latest&timestep=0`),
     ]);
 
-    this.map.addSource('events', { type: 'geojson', data: events ?? { type: 'FeatureCollection', features: [] }, cluster: true, clusterRadius: 40 });
+    this.map.addSource('incidents', { type: 'geojson', data: incidents ?? { type: 'FeatureCollection', features: [] }, cluster: true, clusterRadius: 40 });
     this.map.addSource('alerts', { type: 'geojson', data: alerts ?? { type: 'FeatureCollection', features: [] }, cluster: true, clusterRadius: 40 });
     this.map.addSource('hazards', { type: 'geojson', data: hazards ?? { type: 'FeatureCollection', features: [] } });
     this.map.addLayer({ id: 'hazards-fill', type: 'fill', source: 'hazards', paint: { 'fill-color': '#f94144', 'fill-opacity': 0.15 } });
 
-    this.addClusterLayers('events', '#00bbf9');
+    this.addClusterLayers('incidents', '#00bbf9');
     this.addClusterLayers('alerts', '#ff006e');
   }
 

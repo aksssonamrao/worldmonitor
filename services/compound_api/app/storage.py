@@ -364,7 +364,7 @@ class Storage:
 
     async def freshness_timestamps(self) -> dict[str, Any]:
         async with self._pool.acquire() as conn:
-            events = await conn.fetchval('SELECT MAX(occurred_at) FROM events')
+            events = await conn.fetchval('SELECT MAX(start_at) FROM incidents')
             hazards = await conn.fetchval('SELECT MAX(generated_at) FROM hazards')
             alerts = await conn.fetchval('SELECT MAX(created_at) FROM compound_alerts')
         return {'events_freshness': events, 'hazards_freshness': hazards, 'alerts_freshness': alerts}
@@ -388,7 +388,7 @@ class Storage:
         if bbox:
             params.extend(bbox)
             idx = len(params) - 3
-            bbox_filter = f" AND ST_Intersects(e.geom, ST_MakeEnvelope(${idx}, ${idx+1}, ${idx+2}, ${idx+3}, 4326)::geography)"
+            bbox_filter = f" AND ST_Intersects(i.geom, ST_MakeEnvelope(${idx}, ${idx+1}, ${idx+2}, ${idx+3}, 4326)::geography)"
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
