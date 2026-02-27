@@ -25,9 +25,9 @@ class JsonFormatter(logging.Formatter):
             'request_id': request_id_var.get(),
         }
         if hasattr(record, 'event'):
-            payload['event'] = getattr(record, 'event')
+            payload['event'] = record.event
         if hasattr(record, 'meta'):
-            payload['meta'] = getattr(record, 'meta')
+            payload['meta'] = record.meta
         return json.dumps(payload, default=str)
 
 

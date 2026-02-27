@@ -122,7 +122,7 @@ async def _run_provider(
                     'error': str(exc),
                     'cache_used': True,
                 }
-        logger.error(
+        logger.exception(
             'provider_degraded_without_cache',
             extra={'event': 'provider_degraded', 'meta': {'provider': provider_name, 'error': str(exc), 'cache_used': False}},
         )

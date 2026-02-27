@@ -78,11 +78,11 @@ async def add_request_context(request: Request, call_next):
     token = request_id_var.set(request_id)
     try:
         response = await call_next(request)
+        response.headers['x-request-id'] = request_id
+        logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
+        return response
     finally:
         request_id_var.reset(token)
-    response.headers['x-request-id'] = request_id
-    logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
-    return response
 
 
 @app.get('/ingestor/health')

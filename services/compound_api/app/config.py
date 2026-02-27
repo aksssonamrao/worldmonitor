@@ -5,6 +5,8 @@ from os import getenv
 from typing import Any
 import json
 
+from app.config_utils import required_env
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -112,15 +114,8 @@ def _bbox(value: str, *, default: str) -> tuple[float, float, float, float]:
     return min_lon, min_lat, max_lon, max_lat
 
 
-def _required(name: str) -> str:
-    value = getenv(name, '').strip()
-    if not value:
-        raise RuntimeError(f'{name} is required but missing. Set it in environment/.env before starting compound-api.')
-    return value
-
-
 def load_settings() -> Settings:
-    database_url = _required('DATABASE_URL')
+    database_url = required_env('DATABASE_URL', 'compound-api')
     google_weather_api_key = getenv('GOOGLE_WEATHER_API_KEY', '').strip()
     if not google_weather_api_key:
         raise RuntimeError('GOOGLE_WEATHER_API_KEY is required for compound-api startup (google_weather is the only provider).')

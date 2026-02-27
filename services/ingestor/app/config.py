@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from os import getenv
 
+from .config_utils import required_env
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -49,16 +51,9 @@ def _as_bool(name: str, default: bool) -> bool:
     return raw.lower() in {'1', 'true', 'yes', 'on'}
 
 
-def _required(name: str) -> str:
-    value = getenv(name, '').strip()
-    if not value:
-        raise RuntimeError(f'{name} is required but missing. Set it in environment/.env before starting ingestor.')
-    return value
-
-
 def load_settings() -> Settings:
     return Settings(
-        database_url=_required('DATABASE_URL'),
+        database_url=required_env('DATABASE_URL', 'ingestor'),
         ingest_interval_minutes=int(getenv('INGEST_INTERVAL_MINUTES', '15')),
         gdelt_enabled=_as_bool('GDELT_ENABLED', True),
         reliefweb_enabled=_as_bool('RELIEFWEB_ENABLED', True),

@@ -5,12 +5,13 @@ check_endpoint() {
   local name="$1"
   local url="$2"
 
-  local body status
+  local body status payload
   body=$(curl -sS -m 8 -w $'\n%{http_code}' "$url" || true)
   status=$(echo "$body" | tail -n1)
   payload=$(echo "$body" | sed '$d')
 
   if [[ "$status" =~ ^2 ]]; then
+    local freshness
     freshness=$(python - <<'PY' "$payload"
 import json,sys
 try:

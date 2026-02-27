@@ -8,6 +8,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.logging_utils import configure_logging, next_request_id, request_id_var
 
@@ -24,12 +25,17 @@ VALHALLA_URL = os.getenv('VALHALLA_URL', 'http://valhalla:8002').rstrip('/')
 async def add_request_context(request: Request, call_next):
     request_id = request.headers.get('x-request-id') or next_request_id()
     token = request_id_var.set(request_id)
+    response = None
     try:
         response = await call_next(request)
+    except Exception:
+        logger.exception('http_request_failed', extra={'event': 'http_request_failed', 'meta': {'path': request.url.path, 'method': request.method}})
+        response = JSONResponse(status_code=500, content={'detail': 'Internal Server Error'})
     finally:
+        if response is not None:
+            response.headers['x-request-id'] = request_id
+            logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
         request_id_var.reset(token)
-    response.headers['x-request-id'] = request_id
-    logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
     return response
 
 

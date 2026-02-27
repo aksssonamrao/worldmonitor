@@ -50,3 +50,13 @@ def test_route_multi_leg_normalization(monkeypatch):
     assert route['distance_km'] == 20.0
     assert route['duration_s'] == 1800
     assert len(route['geometry']['coordinates']) >= 3
+
+
+def test_request_id_is_set_for_error_path(monkeypatch):
+    @app.get('/_boom_for_test')
+    def _boom_for_test():
+        raise RuntimeError('boom')
+
+    resp = client.get('/_boom_for_test', headers={'x-request-id': 'rid-123'})
+    assert resp.status_code == 500
+    assert resp.headers['x-request-id'] == 'rid-123'
