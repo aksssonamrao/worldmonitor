@@ -18,7 +18,6 @@ from app.providers.valhalla import isochrone as valhalla_isochrone, route as val
 
 configure_logging('backend_api_planner')
 logger = logging.getLogger(__name__)
-VALHALLA_URL = os.getenv('VALHALLA_URL', 'http://valhalla:8002').rstrip('/')
 COMPOUND_API_URL = os.getenv('COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/')
 
 class VehicleIn(BaseModel):
@@ -421,12 +420,9 @@ def _to_utc_iso(dt: datetime) -> str:
 def _parse_dt(value: str) -> datetime:
     """Parse an ISO-8601 datetime string that must include timezone information."""
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
     except ValueError:
-        if value.endswith('Z'):
-            parsed = datetime.fromisoformat(f"{value[:-1]}+00:00")
-        else:
-            raise HTTPException(status_code=422, detail='invalid datetime format')
+        raise HTTPException(status_code=422, detail='invalid datetime format')
     if parsed.tzinfo is None:
         raise HTTPException(status_code=422, detail='datetime fields must include timezone offset or Z suffix')
     return parsed.astimezone(timezone.utc)

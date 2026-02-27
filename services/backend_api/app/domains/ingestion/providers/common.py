@@ -75,7 +75,10 @@ def parse_datetime_or_now(raw: str | None) -> datetime:
     if not raw:
         return datetime.now(timezone.utc)
     try:
-        return datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except (ValueError, TypeError):
         return datetime.now(timezone.utc)
 

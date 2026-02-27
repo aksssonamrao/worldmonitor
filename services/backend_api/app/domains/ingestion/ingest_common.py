@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -88,15 +88,19 @@ class IngestStorage:
                     $8, $9, $10, $11, $12, ST_SetSRID(ST_MakePoint($13, $14), 4326)::geography,
                     $15, $16, $17, $18, $19::jsonb
                 )
-                ON CONFLICT (source, source_event_id) DO UPDATE SET source = EXCLUDED.source
+                ON CONFLICT (source, source_event_id) DO UPDATE
+                    SET title = EXCLUDED.title,
+                        description = EXCLUDED.description,
+                        occurred_at = EXCLUDED.occurred_at,
+                        severity = EXCLUDED.severity,
+                        confidence = EXCLUDED.confidence,
+                        raw = EXCLUDED.raw
                 RETURNING id
                 """,
                 event.source, event.source_event_id, event.title, event.description, event.url, published_at, occurred_at,
                 event.country, event.event_type, event.subtype, event.severity, event.confidence, event.lon, event.lat,
                 geoh, bucket, normalized, simhash, json.dumps(event.raw),
             )
-            if source_row is None:
-                return
             source_id = source_row['id']
             window_start = bucket - timedelta(hours=dedup_window_hours)
             window_end = bucket + timedelta(hours=dedup_window_hours)

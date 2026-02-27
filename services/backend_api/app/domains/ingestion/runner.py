@@ -15,12 +15,6 @@ from app.domains.ingestion.providers.reliefweb import fetch_reliefweb
 from app.domains.ingestion.providers.rss import fetch_rss_events
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.lower() in {'1','true','yes','on'}
-
 
 def _since_iso(hours: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime('%Y%m%d%H%M%S')

@@ -27,7 +27,7 @@ async def fetch_gdelt(client: httpx.AsyncClient, since_iso: str, focus_countries
         source_event_id = str(article.get('url') or article.get('seendate') or sha1(title.encode()).hexdigest())
         occurred = parse_datetime_or_now(article.get('seendate'))
         events.append(EventSourceCreate(
-            source='gdelt', source_event_id=source_event_id, title=title, description=article.get('seendate'),
+            source='gdelt', source_event_id=source_event_id, title=title, description=article.get('title') or article.get('sourceCollection'),
             url=article.get('url') or '', published_at=occurred, occurred_at=occurred, country=country,
             event_type=classify_event_type(title), subtype=None, severity=severity_from_text(title), confidence=0.7,
             lat=float(lat), lon=float(lon), raw={'sourceCollection': article.get('sourceCollection'), 'themes': article.get('themes'), 'tone': article.get('tone')},

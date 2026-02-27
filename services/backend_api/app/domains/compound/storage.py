@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -565,7 +565,7 @@ class Storage:
             'arrive_by': arrive_by.isoformat(),
         }
         route_hash = hashlib.sha256(json.dumps(cache_material, sort_keys=True).encode('utf-8')).hexdigest()
-        time_bucket = datetime.utcnow().strftime('%Y%m%d%H')
+        time_bucket = datetime.now(timezone.utc).strftime('%Y%m%d%H')
         cached = await self.get_route_score_cache(route_hash, time_bucket)
         if cached:
             return cached

@@ -105,8 +105,8 @@ Run in order:
 docker compose up --build -d
 ./scripts/health_check.sh
 pytest services/backend_api/tests -q
-pytest tests -q -C services/compound_api
-pytest tests -q -C services/planner
+(cd services/compound_api && pytest tests -q)
+(cd services/planner && pytest tests -q)
 npm run typecheck
 npm run build
 ```
