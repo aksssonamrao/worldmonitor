@@ -258,6 +258,18 @@ class IngestStorage:
             )
         return int(row['consecutive_failures'])
 
+    async def update_provider_circuit_open_until(self, provider: str, circuit_open_until: datetime | None) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE provider_status
+                SET circuit_open_until = $2
+                WHERE provider = $1
+                """,
+                provider,
+                circuit_open_until,
+            )
+
     async def list_ingestion_state(self) -> dict[str, str]:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch('SELECT source, updated_at FROM ingestion_state')

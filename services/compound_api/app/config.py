@@ -46,22 +46,34 @@ def _csv_ints(value: str, *, default: str) -> list[int]:
     return [int(part.strip()) for part in raw.split(',') if part.strip()]
 
 
-def _parse_float(name: str, raw: str | None, default: float) -> float:
+def _parse_float(name: str, raw: str | None, default: float, *, min_value: float | None = None, max_value: float | None = None) -> float:
     if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        raise RuntimeError(f"Invalid value for {name}: expected a float, got {raw!r}")
+        value = default
+    else:
+        try:
+            value = float(raw)
+        except ValueError:
+            raise RuntimeError(f"Invalid value for {name}: expected a float, got {raw!r}")
+    if min_value is not None and value < min_value:
+        raise RuntimeError(f"Invalid value for {name}: expected >= {min_value}, got {value!r}")
+    if max_value is not None and value > max_value:
+        raise RuntimeError(f"Invalid value for {name}: expected <= {max_value}, got {value!r}")
+    return value
 
 
-def _parse_int(name: str, raw: str | None, default: int) -> int:
+def _parse_int(name: str, raw: str | None, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
     if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        raise RuntimeError(f"Invalid value for {name}: expected an integer, got {raw!r}")
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise RuntimeError(f"Invalid value for {name}: expected an integer, got {raw!r}")
+    if min_value is not None and value < min_value:
+        raise RuntimeError(f"Invalid value for {name}: expected >= {min_value}, got {value!r}")
+    if max_value is not None and value > max_value:
+        raise RuntimeError(f"Invalid value for {name}: expected <= {max_value}, got {value!r}")
+    return value
 
 
 
@@ -104,7 +116,7 @@ def load_settings() -> Settings:
     if not google_weather_api_key:
         raise RuntimeError('GOOGLE_WEATHER_API_KEY is required for compound-api startup (google_weather is the only provider).')
 
-    return Settings(
+    settings = Settings(
         database_url=database_url,
         google_weather_api_key=google_weather_api_key,
         google_weather_base_url=getenv('GOOGLE_WEATHER_BASE_URL', 'https://weather.googleapis.com/v1').rstrip('/'),
@@ -125,15 +137,18 @@ def load_settings() -> Settings:
         event_lookback_hours=_parse_int('EVENT_LOOKBACK_HOURS', getenv('EVENT_LOOKBACK_HOURS'), 72),
         alert_score_threshold=_parse_float('ALERT_SCORE_THRESHOLD', getenv('ALERT_SCORE_THRESHOLD'), 20.0),
         event_type_weights=_parse_json('EVENT_TYPE_WEIGHTS_JSON', getenv('EVENT_TYPE_WEIGHTS_JSON'), {'PROTEST': 1.2, 'STRIKE': 1.2, 'CONFLICT': 1.5, 'DISASTER': 1.4, 'OUTAGE': 1.3, 'ACCIDENT': 1.1, 'OTHER': 1.0}),
-        provider_connect_timeout_seconds=_parse_float('PROVIDER_CONNECT_TIMEOUT_SECONDS', getenv('PROVIDER_CONNECT_TIMEOUT_SECONDS'), 5.0),
-        provider_read_timeout_seconds=_parse_float('PROVIDER_READ_TIMEOUT_SECONDS', getenv('PROVIDER_READ_TIMEOUT_SECONDS'), 20.0),
-        provider_max_retries=_parse_int('PROVIDER_MAX_RETRIES', getenv('PROVIDER_MAX_RETRIES'), 3),
-        provider_backoff_base_seconds=_parse_float('PROVIDER_BACKOFF_BASE_SECONDS', getenv('PROVIDER_BACKOFF_BASE_SECONDS'), 0.5),
-        provider_backoff_max_seconds=_parse_float('PROVIDER_BACKOFF_MAX_SECONDS', getenv('PROVIDER_BACKOFF_MAX_SECONDS'), 8.0),
-        provider_backoff_jitter_seconds=_parse_float('PROVIDER_BACKOFF_JITTER_SECONDS', getenv('PROVIDER_BACKOFF_JITTER_SECONDS'), 0.25),
-        provider_rate_limit_per_second=_parse_float('PROVIDER_RATE_LIMIT_PER_SECOND', getenv('PROVIDER_RATE_LIMIT_PER_SECOND'), 5.0),
-        provider_circuit_failure_threshold=_parse_int('PROVIDER_CIRCUIT_FAILURE_THRESHOLD', getenv('PROVIDER_CIRCUIT_FAILURE_THRESHOLD'), 3),
-        provider_circuit_cooldown_seconds=_parse_int('PROVIDER_CIRCUIT_COOLDOWN_SECONDS', getenv('PROVIDER_CIRCUIT_COOLDOWN_SECONDS'), 60),
-        provider_cache_ttl_seconds=_parse_int('PROVIDER_CACHE_TTL_SECONDS', getenv('PROVIDER_CACHE_TTL_SECONDS'), 1800),
-        provider_max_stale_seconds=_parse_int('PROVIDER_MAX_STALE_SECONDS', getenv('PROVIDER_MAX_STALE_SECONDS'), 10800),
+        provider_connect_timeout_seconds=_parse_float('PROVIDER_CONNECT_TIMEOUT_SECONDS', getenv('PROVIDER_CONNECT_TIMEOUT_SECONDS'), 5.0, min_value=0.0001),
+        provider_read_timeout_seconds=_parse_float('PROVIDER_READ_TIMEOUT_SECONDS', getenv('PROVIDER_READ_TIMEOUT_SECONDS'), 20.0, min_value=0.0001),
+        provider_max_retries=_parse_int('PROVIDER_MAX_RETRIES', getenv('PROVIDER_MAX_RETRIES'), 3, min_value=0),
+        provider_backoff_base_seconds=_parse_float('PROVIDER_BACKOFF_BASE_SECONDS', getenv('PROVIDER_BACKOFF_BASE_SECONDS'), 0.5, min_value=0.0001),
+        provider_backoff_max_seconds=_parse_float('PROVIDER_BACKOFF_MAX_SECONDS', getenv('PROVIDER_BACKOFF_MAX_SECONDS'), 8.0, min_value=0.0001),
+        provider_backoff_jitter_seconds=_parse_float('PROVIDER_BACKOFF_JITTER_SECONDS', getenv('PROVIDER_BACKOFF_JITTER_SECONDS'), 0.25, min_value=0.0),
+        provider_rate_limit_per_second=_parse_float('PROVIDER_RATE_LIMIT_PER_SECOND', getenv('PROVIDER_RATE_LIMIT_PER_SECOND'), 5.0, min_value=0.0001),
+        provider_circuit_failure_threshold=_parse_int('PROVIDER_CIRCUIT_FAILURE_THRESHOLD', getenv('PROVIDER_CIRCUIT_FAILURE_THRESHOLD'), 3, min_value=0),
+        provider_circuit_cooldown_seconds=_parse_int('PROVIDER_CIRCUIT_COOLDOWN_SECONDS', getenv('PROVIDER_CIRCUIT_COOLDOWN_SECONDS'), 60, min_value=1),
+        provider_cache_ttl_seconds=_parse_int('PROVIDER_CACHE_TTL_SECONDS', getenv('PROVIDER_CACHE_TTL_SECONDS'), 1800, min_value=1),
+        provider_max_stale_seconds=_parse_int('PROVIDER_MAX_STALE_SECONDS', getenv('PROVIDER_MAX_STALE_SECONDS'), 10800, min_value=1),
     )
+    if settings.provider_backoff_max_seconds < settings.provider_backoff_base_seconds:
+        raise RuntimeError('Invalid provider backoff configuration: PROVIDER_BACKOFF_MAX_SECONDS must be >= PROVIDER_BACKOFF_BASE_SECONDS')
+    return settings

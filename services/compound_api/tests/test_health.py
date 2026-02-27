@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.config import load_settings
+from app.provider_client import RateLimiter
 from app.weather.google_weather_client import GoogleWeatherClient
 
 
@@ -95,3 +96,15 @@ def test_invalid_event_type_weights_json(monkeypatch):
     monkeypatch.setenv('EVENT_TYPE_WEIGHTS_JSON', '{invalid')
     with pytest.raises(RuntimeError, match='Invalid value for EVENT_TYPE_WEIGHTS_JSON'):
         load_settings()
+
+
+def test_invalid_provider_timeout_settings(monkeypatch):
+    monkeypatch.setenv('GOOGLE_WEATHER_API_KEY', 'test-key')
+    monkeypatch.setenv('PROVIDER_CONNECT_TIMEOUT_SECONDS', '0')
+    with pytest.raises(RuntimeError, match='PROVIDER_CONNECT_TIMEOUT_SECONDS'):
+        load_settings()
+
+
+def test_rate_limiter_rejects_non_positive_rate():
+    with pytest.raises(ValueError, match='rate_per_second'):
+        RateLimiter(0)

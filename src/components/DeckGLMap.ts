@@ -2360,9 +2360,23 @@ export class DeckGLMap {
           return `${deltaMin} min ago`;
         };
         const degraded = this.compoundSystemStatus.provider_status.some((p) => p.consecutive_failures > 0);
-        const degradedHint = degraded ? ' ⚠️' : '';
-        const degradedTitle = degraded ? ` title="Using cached data (last updated ${this.compoundSystemStatus.hazards_freshness || 'unknown'})."` : '';
-        freshnessEl.innerHTML = `<div${degradedTitle}>Events: ${ago(this.compoundSystemStatus.events_freshness)}${degradedHint}</div><div>Hazards: ${ago(this.compoundSystemStatus.hazards_freshness)}</div><div>Alerts: ${ago(this.compoundSystemStatus.alerts_freshness)}</div>`;
+
+        freshnessEl.replaceChildren();
+
+        const eventsRow = document.createElement('div');
+        eventsRow.textContent = `Events: ${ago(this.compoundSystemStatus.events_freshness)}`;
+        if (degraded) {
+          eventsRow.textContent += ' ⚠️';
+          eventsRow.title = `Using cached data (last updated ${this.compoundSystemStatus.hazards_freshness || 'unknown'}).`;
+        }
+
+        const hazardsRow = document.createElement('div');
+        hazardsRow.textContent = `Hazards: ${ago(this.compoundSystemStatus.hazards_freshness)}`;
+
+        const alertsRow = document.createElement('div');
+        alertsRow.textContent = `Alerts: ${ago(this.compoundSystemStatus.alerts_freshness)}`;
+
+        freshnessEl.append(eventsRow, hazardsRow, alertsRow);
       }
       this.setLayerReady('compoundRisk', mapped.length > 0);
       this.render();

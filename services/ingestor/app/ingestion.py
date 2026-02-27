@@ -15,6 +15,7 @@ from .providers.planned import fetch_planned
 from .providers.reliefweb import fetch_reliefweb
 from .providers.rss import fetch_rss_events
 from .providers.usgs import fetch_usgs
+from .providers.common import EventSourceCreate
 from .storage import IngestStorage
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,26 @@ def _serialize_event(event: Any) -> dict[str, Any]:
         if item.get(key):
             item[key] = item[key].isoformat()
     return item
+
+
+def _deserialize_event(payload: dict[str, Any]) -> EventSourceCreate:
+    return EventSourceCreate(
+        source=payload['source'],
+        source_event_id=payload['source_event_id'],
+        title=payload['title'],
+        description=payload.get('description'),
+        url=payload['url'],
+        published_at=datetime.fromisoformat(payload['published_at']),
+        occurred_at=datetime.fromisoformat(payload['occurred_at']) if payload.get('occurred_at') else None,
+        country=payload.get('country'),
+        event_type=payload['event_type'],
+        subtype=payload.get('subtype'),
+        severity=float(payload['severity']),
+        confidence=float(payload['confidence']),
+        lat=float(payload['lat']),
+        lon=float(payload['lon']),
+        raw=payload.get('raw') or {},
+    )
 
 
 async def _safe_insert_events(storage: IngestStorage, source_name: str, events: list[Any], settings: Settings) -> int:
@@ -63,7 +84,6 @@ async def _run_provider(
     try:
         events = await provider_client.run(
             fetcher,
-            consecutive_failures=int(status.get('consecutive_failures', 0) or 0),
             circuit_open_until=status.get('circuit_open_until'),
         )
         await storage.upsert_provider_cache(
@@ -78,12 +98,13 @@ async def _run_provider(
         failures = await storage.mark_provider_failure(provider_name, str(exc), None)
         circuit_open_until = provider_client.next_circuit_open_until(failures)
         if circuit_open_until is not None:
-            await storage.mark_provider_failure(provider_name, str(exc), circuit_open_until)
+            await storage.update_provider_circuit_open_until(provider_name, circuit_open_until)
         cached = await storage.get_provider_cache(provider_name, cache_key)
         if cached:
             stale_seconds = (datetime.now(timezone.utc) - cached['fetched_at']).total_seconds()
             if stale_seconds <= max_stale_seconds:
-                return [], True, {
+                cached_events = [_deserialize_event(item) for item in cached.get('payload_json', {}).get('events', [])]
+                return cached_events, True, {
                     'degraded': True,
                     'fetched_at': cached['fetched_at'].isoformat(),
                     'error': str(exc),

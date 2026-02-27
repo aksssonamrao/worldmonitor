@@ -11,7 +11,9 @@ T = TypeVar('T')
 
 class RateLimiter:
     def __init__(self, rate_per_second: float):
-        self._interval = 1.0 / max(rate_per_second, 0.1)
+        if rate_per_second <= 0:
+            raise ValueError(f'rate_per_second must be > 0, got {rate_per_second!r}')
+        self._interval = 1.0 / rate_per_second
         self._lock = asyncio.Lock()
         self._next = 0.0
 

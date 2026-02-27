@@ -82,20 +82,26 @@ class HazardGenerator:
                     for ts, rec in cached_for_point.items():
                         samples_by_hour[ts].append((lat, lon, rec))
                 else:
-                    # Some samples are missing; fetch from the upstream API and cache results.
+                    # Some samples are missing; fetch from the upstream API and merge with cache.
                     weather_result = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
                     fetched_records = weather_result['rows']
-                    if fetched_records:
-                        stats['points_fetched'] += 1
-                    for record in fetched_records:
-                        ts = record['forecast_ts']
+                    fetched_by_ts = {record['forecast_ts']: record for record in fetched_records}
+
+                    non_cached_rows = 0
+                    all_timestamps = set(cached_for_point.keys()) | set(fetched_by_ts.keys())
+                    for ts in all_timestamps:
                         if ts in cached_for_point:
-                            # This timestamp was already in cache (partial coverage); prefer cached copy.
                             stats['cache_hits'] += 1
                             samples_by_hour[ts].append((lat, lon, cached_for_point[ts]))
-                        else:
-                            await self.storage.upsert_sample(lat, lon, record)
-                            samples_by_hour[ts].append((lat, lon, record))
+                            continue
+
+                        record = fetched_by_ts[ts]
+                        non_cached_rows += 1
+                        await self.storage.upsert_sample(lat, lon, record)
+                        samples_by_hour[ts].append((lat, lon, record))
+
+                    if non_cached_rows > 0:
+                        stats['points_fetched'] += 1
 
             await self.storage.clear_hazards(run_id)
             for timestep in timesteps:

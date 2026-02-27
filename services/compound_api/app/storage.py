@@ -366,7 +366,7 @@ class Storage:
         async with self._pool.acquire() as conn:
             events = await conn.fetchval('SELECT MAX(occurred_at) FROM events')
             hazards = await conn.fetchval('SELECT MAX(generated_at) FROM hazards')
-            alerts = await conn.fetchval('SELECT MAX(forecast_ts) FROM hazards')
+            alerts = await conn.fetchval('SELECT MAX(created_at) FROM compound_alerts')
         return {'events_freshness': events, 'hazards_freshness': hazards, 'alerts_freshness': alerts}
 
     async def list_ingestion_state(self) -> dict[str, Any]:

@@ -40,7 +40,6 @@ class ProviderClient:
         self,
         op: Callable[[], Awaitable[T]],
         *,
-        consecutive_failures: int,
         circuit_open_until: datetime | None,
     ) -> T:
         now = datetime.now(timezone.utc)

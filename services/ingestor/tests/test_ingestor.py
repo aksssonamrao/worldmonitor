@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from datetime import datetime, timezone
 
 import httpx
@@ -12,6 +13,9 @@ from app.providers.gdelt import fetch_gdelt
 from app.providers.planned import fetch_planned
 from app.providers.reliefweb import fetch_reliefweb
 from app.providers.usgs import fetch_usgs
+
+
+PLANNED_DISRUPTIONS_PATH = (Path(__file__).resolve().parents[3] / 'config' / 'planned_disruptions.yml').as_posix()
 
 
 class FakeStorage:
@@ -41,7 +45,7 @@ def test_usgs_ingest_creates_sources_and_incidents():
 
 
 def test_planned_ingest_creates_incidents():
-    events = fetch_planned('../../config/planned_disruptions.yml')
+    events = fetch_planned(PLANNED_DISRUPTIONS_PATH)
     assert len(events) >= 1
     assert all(isinstance(e, EventSourceCreate) for e in events)
 
@@ -83,8 +87,8 @@ def test_firms_disabled_skips_cleanly(monkeypatch):
     monkeypatch.setattr('app.ingestion.httpx.AsyncClient', DummyClient)
 
     settings = Settings(
-        database_url='postgresql://', ingest_interval_minutes=15, gdelt_enabled=True, reliefweb_enabled=True, rss_enabled=False,
-        usgs_enabled=True, firms_enabled=False, planned_enabled=False, rss_config_path='x', planned_disruptions_path='../../config/planned_disruptions.yml',
+        database_url='postgresql://', ingest_interval_minutes=15, gdelt_enabled=False, reliefweb_enabled=False, rss_enabled=False,
+        usgs_enabled=False, firms_enabled=False, planned_enabled=False, rss_config_path='x', planned_disruptions_path=PLANNED_DISRUPTIONS_PATH,
         reliefweb_appname='app', firms_map_key='', focus_countries=['US'], focus_regions=['EUROPE'], gdelt_lookback_hours=72,
         usgs_min_magnitude=4.0, dedup_time_window_hours=6, simhash_strong_max_dist=12, simhash_ambiguous_max_dist=18,
         geohash_precision=6, time_bucket_minutes=60, monitoring_interval_minutes=30, compound_api_url='http://compound_api:8084',

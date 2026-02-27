@@ -28,7 +28,7 @@ class FakeStorage:
     async def get_provider_cache(self, provider, cache_key):
         if not self.with_cache:
             return None
-        return {'payload_json': {'events': []}, 'fetched_at': datetime.now(timezone.utc), 'ttl_seconds': 60}
+        return {'payload_json': {'events': [{'source': 'gdelt', 'source_event_id': 'cached-1', 'title': 'Cached', 'description': 'from cache', 'url': 'https://example.com', 'published_at': '2026-01-01T00:00:00+00:00', 'occurred_at': '2026-01-01T00:00:00+00:00', 'country': 'US', 'event_type': 'OTHER', 'subtype': None, 'severity': 0.5, 'confidence': 0.8, 'lat': 1.1, 'lon': 2.2, 'raw': {'k': 'v'}}]}, 'fetched_at': datetime.now(timezone.utc), 'ttl_seconds': 60}
 
 
 def _provider_client() -> ProviderClient:
@@ -59,7 +59,9 @@ def test_provider_failure_with_cache_marks_degraded():
         provider_client=_provider_client(),
         fetcher=fetcher,
     ))
-    assert events == []
+    assert len(events) == 1
+    assert events[0].source_event_id == 'cached-1'
+    assert events[0].title == 'Cached'
     assert degraded is True
     assert meta['cache_used'] is True
 
