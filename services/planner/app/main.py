@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import uuid
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
@@ -15,6 +16,7 @@ from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from pydantic import BaseModel, Field
 
 app = FastAPI(title='Planner API')
+logger = logging.getLogger(__name__)
 ROUTING_API_URL = os.getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
 COMPOUND_API_URL = os.getenv('COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/')
 
@@ -392,14 +394,22 @@ class MitigationIn(BaseModel):
 
 
 _fallback_path = Path(__file__).with_name('fallback_hubs.json')
+_default_fallback_hubs = [
+    {'id': 'LAX', 'label': 'Los Angeles Logistics Node', 'lat': 34.0522, 'lon': -118.2437},
+    {'id': 'ORD', 'label': 'Chicago Logistics Node', 'lat': 41.8781, 'lon': -87.6298},
+    {'id': 'DFW', 'label': 'Dallas/Fort Worth Logistics Node', 'lat': 32.8998, 'lon': -97.0403},
+]
 if _fallback_path.exists():
-    FALLBACK_HUBS = json.loads(_fallback_path.read_text())
+    try:
+        FALLBACK_HUBS = json.loads(_fallback_path.read_text())
+    except json.JSONDecodeError:
+        logger.exception('failed to parse fallback hubs json: %s', _fallback_path)
+        FALLBACK_HUBS = _default_fallback_hubs
+    except Exception:
+        logger.exception('failed to load fallback hubs: %s', _fallback_path)
+        FALLBACK_HUBS = _default_fallback_hubs
 else:
-    FALLBACK_HUBS = [
-        {'id': 'LAX', 'label': 'Los Angeles Logistics Node', 'lat': 34.0522, 'lon': -118.2437},
-        {'id': 'ORD', 'label': 'Chicago Logistics Node', 'lat': 41.8781, 'lon': -87.6298},
-        {'id': 'DFW', 'label': 'Dallas/Fort Worth Logistics Node', 'lat': 32.8998, 'lon': -97.0403},
-    ]
+    FALLBACK_HUBS = _default_fallback_hubs
 
 
 class RoutingPlugin:
@@ -431,7 +441,17 @@ def _to_utc_iso(dt: datetime) -> str:
 
 
 def _parse_dt(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    """Parse an ISO-8601 datetime string that must include timezone information."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        if value.endswith('Z'):
+            parsed = datetime.fromisoformat(f"{value[:-1]}+00:00")
+        else:
+            raise HTTPException(status_code=422, detail='invalid datetime format')
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=422, detail='datetime fields must include timezone offset or Z suffix')
+    return parsed.astimezone(timezone.utc)
 
 
 def _normalize_evidence(score: dict[str, Any], avoid_types: set[str] | None = None) -> tuple[dict[str, Any], list[str], str | None]:
@@ -503,10 +523,10 @@ def _within_constraints(option: dict[str, Any], constraints: MitigationConstrain
     return True
 
 
-def _simulate_win_rates(options: list[dict[str, Any]], risk_appetite: float, runs: int) -> list[dict[str, Any]]:
+def _simulate_win_rates(options: list[dict[str, Any]], risk_appetite: float, runs: int, seed: int | None = None) -> list[dict[str, Any]]:
     import random
 
-    rng = random.Random(42)
+    rng = random.Random(seed) if seed is not None else random.Random()
     wins = {o['option_id']: 0 for o in options}
     for _ in range(runs):
         scores: list[tuple[str, float]] = []
@@ -624,14 +644,18 @@ async def agent_mitigation(request: MitigationIn) -> dict[str, Any]:
                 candidates.append(option)
 
         midpoint = shipment.origin
+        isochrone_result: dict[str, Any] | None = None
         try:
             coords = request.selected_route.geometry.get('coordinates', [])
             if len(coords) > 2:
                 mid = coords[len(coords) // 2]
                 midpoint = {'lat': float(mid[1]), 'lon': float(mid[0])}
-            await plugin.isochrone({'locations': [midpoint], 'contours': [{'time': 240}], 'costing': shipment.mode, 'polygons': True})
+            isochrone_result = await plugin.isochrone({'locations': [midpoint], 'contours': [{'time': 240}], 'costing': shipment.mode, 'polygons': True})
         except Exception as exc:
             degrade_notes.append(f'routing_api degraded on isochrone: {exc.__class__.__name__}')
+        if isochrone_result is not None:
+            feature_count = len(isochrone_result.get('feature_collection', {}).get('features', []))
+            degrade_notes.append(f'isochrone_features={feature_count}')
 
         hub_rank: list[tuple[float, dict[str, Any]]] = []
         for hub in FALLBACK_HUBS:
@@ -687,22 +711,27 @@ async def agent_mitigation(request: MitigationIn) -> dict[str, Any]:
 
         ranked = sorted(candidates, key=lambda option: _objective(option['risk_total'], option['delta_eta_hours'], shipment.risk_appetite))[:3]
         if not ranked:
-            ranked = [
-                {
-                    'option_id': 'depart_later_6h',
-                    'label': 'Depart later (+6h)',
-                    'geometry': request.selected_route.geometry,
-                    'eta_hours': round(baseline_eta + 6, 3),
-                    'delta_eta_hours': 6.0,
-                    'risk_total': round(baseline_risk, 3),
-                    'delta_risk': 0.0,
-                    'risk_breakdown': baseline['risk_breakdown'],
-                    'evidence': base_evidence,
-                    'citations': base_citations,
-                }
-            ]
+            fallback_delta = constraints.max_extra_eta_hours if constraints and constraints.max_extra_eta_hours is not None else 6.0
+            fallback_delta = max(0.0, min(float(fallback_delta), 6.0))
+            fallback_option = {
+                'option_id': f'depart_later_{int(fallback_delta) if fallback_delta.is_integer() else fallback_delta}h',
+                'label': f'Depart later (+{fallback_delta:g}h)',
+                'geometry': request.selected_route.geometry,
+                'eta_hours': round(baseline_eta + fallback_delta, 3),
+                'delta_eta_hours': round(fallback_delta, 3),
+                'risk_total': round(baseline_risk, 3),
+                'delta_risk': 0.0,
+                'risk_breakdown': baseline['risk_breakdown'],
+                'evidence': base_evidence,
+                'citations': base_citations,
+            }
+            if _within_constraints(fallback_option, constraints):
+                ranked = [fallback_option]
 
-        win_rate = _simulate_win_rates(ranked, shipment.risk_appetite, 100)
+        if not ranked:
+            raise HTTPException(status_code=422, detail='No mitigation options available within provided constraints')
+
+        win_rate = _simulate_win_rates(ranked, shipment.risk_appetite, 100, seed=hash(request_id) % (2**31))
         recommended = ranked[0]['option_id']
 
         if os.getenv('OPENAI_API_KEY', '').strip():

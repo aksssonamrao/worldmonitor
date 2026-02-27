@@ -504,14 +504,25 @@ export class App {
     if (!this.mitigation) return;
 
     const summary = document.createElement('div');
-    summary.innerHTML = `<h4>Mitigation</h4><div>Baseline risk ${this.mitigation.baseline.risk_total.toFixed(1)} → Recommended <b>${this.mitigation.recommended_option_id}</b></div>`;
+    const title = document.createElement('h4');
+    title.textContent = 'Mitigation';
+    const line = document.createElement('div');
+    line.textContent = `Baseline risk ${this.mitigation.baseline.risk_total.toFixed(1)} → Recommended ${this.mitigation.recommended_option_id}`;
+    summary.append(title, line);
     container.appendChild(summary);
 
     this.mitigation.options.forEach((option) => {
       const row = document.createElement('div');
       row.className = 'issue';
       const topWin = this.mitigation?.robustness.win_rate.find((item) => item.option_id === option.option_id)?.win_pct ?? 0;
-      row.innerHTML = `<div><b>${option.label}</b> · Δη ${option.delta_eta_hours.toFixed(1)}h · Δrisk ${option.delta_risk.toFixed(1)} · win ${topWin.toFixed(1)}%</div>`;
+      const metrics = document.createElement('div');
+      const label = document.createElement('strong');
+      label.textContent = option.label;
+      metrics.append(
+        label,
+        document.createTextNode(` · Δη ${option.delta_eta_hours.toFixed(1)}h · Δrisk ${option.delta_risk.toFixed(1)} · win ${topWin.toFixed(1)}%`),
+      );
+      row.appendChild(metrics);
       const apply = document.createElement('button');
       apply.textContent = 'Apply option';
       apply.onclick = () => this.applyMitigationOption(option);
@@ -519,10 +530,15 @@ export class App {
       const citations = document.createElement('div');
       option.citations.slice(0, 3).forEach((url) => {
         const link = document.createElement('a');
-        link.href = url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.textContent = 'citation';
+        const safeUrl = this.safeHttpUrl(url);
+        if (safeUrl) {
+          link.href = safeUrl;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'citation';
+        } else {
+          link.textContent = 'invalid citation';
+        }
         citations.appendChild(link);
         citations.appendChild(document.createTextNode(' '));
       });
@@ -532,13 +548,22 @@ export class App {
   }
 
   private applyMitigationOption(option: MitigationOption): void {
-    const selected = this.routes.find((route) => route.id === this.selectedRouteId);
-    if (!selected) return;
-    selected.geometry = option.geometry;
-    selected.eta_hours = option.eta_hours;
-    selected.summary_risk.total = option.risk_total;
+    const routeIndex = this.routes.findIndex((route) => route.id === this.selectedRouteId);
+    if (routeIndex < 0) return;
+    const current = this.routes[routeIndex];
+    if (!current) return;
+    const newRoute: RouteOption = {
+      ...current,
+      geometry: option.geometry,
+      eta_hours: option.eta_hours,
+      summary_risk: {
+        ...current.summary_risk,
+        total: option.risk_total,
+      },
+    };
+    this.routes.splice(routeIndex, 1, newRoute);
     this.renderRoutesLayer();
-    this.selectRoute(selected.id, false);
+    this.selectRoute(newRoute.id, false);
 
     const evidence = this.container.querySelector('#evidence') as HTMLElement;
     evidence.replaceChildren();

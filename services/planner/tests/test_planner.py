@@ -149,9 +149,19 @@ def test_robustness_win_rate_calculation():
         {'option_id': 'a', 'risk_breakdown': {'weather': 10, 'news': 8, 'compound': 3}, 'delta_eta_hours': 0.5},
         {'option_id': 'b', 'risk_breakdown': {'weather': 15, 'news': 12, 'compound': 6}, 'delta_eta_hours': 0.0},
     ]
-    results = _simulate_win_rates(options, 0.5, 100)
+    results = _simulate_win_rates(options, 0.5, 100, seed=7)
     assert len(results) == 2
     assert round(sum(item['win_pct'] for item in results), 2) == 100.0
+
+
+def test_robustness_single_option_edge_case():
+    options = [
+        {'option_id': 'only', 'risk_breakdown': {'weather': 12, 'news': 9, 'compound': 4}, 'delta_eta_hours': 1.0},
+    ]
+    results = _simulate_win_rates(options, 0.5, 100, seed=11)
+    assert len(results) == 1
+    assert results[0]['option_id'] == 'only'
+    assert results[0]['win_pct'] == 100.0
 
 
 def test_objective_respects_risk_appetite():
