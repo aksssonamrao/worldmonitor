@@ -62,7 +62,7 @@ import {
 } from '@/services/hotspot-escalation';
 import { getCountryScore } from '@/services/country-instability';
 import { getAlertsNearLocation } from '@/services/geo-convergence';
-import { fetchCompoundAlerts, fetchCompoundHazards, refreshCompoundHazards, type CompoundAlertProperties } from '@/services/compound-risk';
+import { fetchCompoundAlerts, fetchCompoundHazards, fetchCompoundSystemStatus, refreshCompoundHazards, type CompoundAlertProperties, type CompoundSystemStatus } from '@/services/compound-risk';
 import { generatePlannerPlan, type PlannerResponse } from '@/services/planner';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
@@ -203,6 +203,7 @@ export class DeckGLMap {
   private compoundTimestep = 0;
   private compoundLoading = false;
   private compoundError: string | null = null;
+  private compoundSystemStatus: CompoundSystemStatus | null = null;
   private selectedCompoundAlert: CompoundAlertItem | null = null;
   private _compoundRiskRequestId = 0;
   private plannerPlan: PlannerResponse | null = null;
@@ -2141,6 +2142,7 @@ export class DeckGLMap {
       <input id="compound-risk-timestep" class="compound-risk-slider" type="range" min="0" max="24" step="6" value="0" />
       <button class="compound-risk-refresh">Refresh Hazards</button>
       <div class="compound-risk-provider">Hazards updated: never, provider: Google Weather</div>
+      <div class="compound-risk-freshness"></div>
       <div class="compound-risk-status"></div>
       <div class="compound-alerts-drawer"></div>
       <div class="compound-alert-detail">Select an alert for details.</div>
@@ -2310,15 +2312,17 @@ export class DeckGLMap {
     this.setCompoundStatus('Loading compound risk…', 'loading');
 
     try {
-      const [hazards, alerts] = await Promise.all([
+      const [hazards, alerts, systemStatus] = await Promise.all([
         fetchCompoundHazards(this.compoundTimestep),
         fetchCompoundAlerts(this.compoundTimestep),
+        fetchCompoundSystemStatus(),
       ]);
 
       // Discard stale responses from previous slider positions
       if (reqId !== this._compoundRiskRequestId) return;
 
       this.compoundHazards = hazards;
+      this.compoundSystemStatus = systemStatus;
 
       const mapped = alerts.features
         .map((feature, idx) => {
@@ -2346,6 +2350,20 @@ export class DeckGLMap {
       this.setCompoundDetail(this.selectedCompoundAlert);
       this.renderCompoundDrawer();
       this.setCompoundStatus(mapped.length ? `Loaded ${mapped.length} alerts.` : 'No alerts returned.');
+
+      const freshnessEl = this.container.querySelector('.compound-risk-freshness') as HTMLElement | null;
+      if (freshnessEl && this.compoundSystemStatus) {
+        const now = Date.now();
+        const ago = (iso: string | null) => {
+          if (!iso) return 'unknown';
+          const deltaMin = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
+          return `${deltaMin} min ago`;
+        };
+        const degraded = this.compoundSystemStatus.provider_status.some((p) => p.consecutive_failures > 0);
+        const degradedHint = degraded ? ' ⚠️' : '';
+        const degradedTitle = degraded ? ` title="Using cached data (last updated ${this.compoundSystemStatus.hazards_freshness || 'unknown'})."` : '';
+        freshnessEl.innerHTML = `<div${degradedTitle}>Events: ${ago(this.compoundSystemStatus.events_freshness)}${degradedHint}</div><div>Hazards: ${ago(this.compoundSystemStatus.hazards_freshness)}</div><div>Alerts: ${ago(this.compoundSystemStatus.alerts_freshness)}</div>`;
+      }
       this.setLayerReady('compoundRisk', mapped.length > 0);
       this.render();
     } catch (error) {

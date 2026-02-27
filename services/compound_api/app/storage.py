@@ -282,6 +282,93 @@ class Storage:
         item['sources'] = [dict(s) for s in sources]
         return item
 
+
+    async def upsert_provider_cache(self, provider: str, cache_key: str, payload: dict[str, Any], ttl_seconds: int) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO provider_cache(provider, cache_key, payload_json, fetched_at, ttl_seconds)
+                VALUES($1, $2, $3::jsonb, NOW(), $4)
+                ON CONFLICT (provider, cache_key) DO UPDATE
+                  SET payload_json=EXCLUDED.payload_json, fetched_at=NOW(), ttl_seconds=EXCLUDED.ttl_seconds
+                """,
+                provider, cache_key, json.dumps(payload), ttl_seconds,
+            )
+
+    async def get_provider_cache(self, provider: str, cache_key: str) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT payload_json, fetched_at, ttl_seconds
+                FROM provider_cache
+                WHERE provider = $1 AND cache_key = $2
+                """,
+                provider, cache_key,
+            )
+        if row is None:
+            return None
+        return dict(row)
+
+    async def get_provider_status(self, provider: str) -> dict[str, Any]:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT provider, last_success_at, last_error_at, last_error, consecutive_failures, circuit_open_until
+                FROM provider_status
+                WHERE provider = $1
+                """,
+                provider,
+            )
+        if row is None:
+            return {'provider': provider, 'consecutive_failures': 0, 'circuit_open_until': None}
+        return dict(row)
+
+    async def mark_provider_success(self, provider: str) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO provider_status(provider, last_success_at, consecutive_failures, circuit_open_until, last_error)
+                VALUES($1, NOW(), 0, NULL, NULL)
+                ON CONFLICT(provider) DO UPDATE
+                  SET last_success_at=NOW(), consecutive_failures=0, circuit_open_until=NULL, last_error=NULL
+                """,
+                provider,
+            )
+
+    async def mark_provider_failure(self, provider: str, error: str, circuit_open_until: datetime | None) -> int:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO provider_status(provider, last_error_at, last_error, consecutive_failures, circuit_open_until)
+                VALUES($1, NOW(), $2, 1, $3)
+                ON CONFLICT(provider) DO UPDATE
+                  SET last_error_at=NOW(),
+                      last_error=EXCLUDED.last_error,
+                      consecutive_failures=provider_status.consecutive_failures + 1,
+                      circuit_open_until=$3
+                RETURNING consecutive_failures
+                """,
+                provider, error[:2000], circuit_open_until,
+            )
+        return int(row['consecutive_failures'])
+
+    async def list_provider_status(self) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT provider, last_success_at, last_error_at, last_error, consecutive_failures, circuit_open_until
+                FROM provider_status ORDER BY provider
+                """
+            )
+        return [dict(r) for r in rows]
+
+    async def freshness_timestamps(self) -> dict[str, Any]:
+        async with self._pool.acquire() as conn:
+            events = await conn.fetchval('SELECT MAX(occurred_at) FROM events')
+            hazards = await conn.fetchval('SELECT MAX(generated_at) FROM hazards')
+            alerts = await conn.fetchval('SELECT MAX(forecast_ts) FROM hazards')
+        return {'events_freshness': events, 'hazards_freshness': hazards, 'alerts_freshness': alerts}
+
     async def list_ingestion_state(self) -> dict[str, Any]:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch("SELECT source, cursor, updated_at FROM ingestion_state")

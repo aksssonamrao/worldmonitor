@@ -29,6 +29,17 @@ class Settings:
     time_bucket_minutes: int
     monitoring_interval_minutes: int
     compound_api_url: str
+    provider_connect_timeout_seconds: float
+    provider_read_timeout_seconds: float
+    provider_max_retries: int
+    provider_backoff_base_seconds: float
+    provider_backoff_max_seconds: float
+    provider_backoff_jitter_seconds: float
+    provider_rate_limit_per_second: float
+    provider_circuit_failure_threshold: int
+    provider_circuit_cooldown_seconds: int
+    provider_cache_ttl_seconds: int
+    provider_max_stale_seconds: int
 
 
 def _as_bool(name: str, default: bool) -> bool:
@@ -63,4 +74,15 @@ def load_settings() -> Settings:
         time_bucket_minutes=int(getenv('TIME_BUCKET_MINUTES', '60')),
         monitoring_interval_minutes=int(getenv('MONITORING_INTERVAL_MINUTES', '30')),
         compound_api_url=getenv('COMPOUND_API_URL', 'http://compound_api:8084').rstrip('/'),
+        provider_connect_timeout_seconds=float(getenv('PROVIDER_CONNECT_TIMEOUT_SECONDS', '5.0')),
+        provider_read_timeout_seconds=float(getenv('PROVIDER_READ_TIMEOUT_SECONDS', '20.0')),
+        provider_max_retries=int(getenv('PROVIDER_MAX_RETRIES', '3')),
+        provider_backoff_base_seconds=float(getenv('PROVIDER_BACKOFF_BASE_SECONDS', '0.5')),
+        provider_backoff_max_seconds=float(getenv('PROVIDER_BACKOFF_MAX_SECONDS', '8.0')),
+        provider_backoff_jitter_seconds=float(getenv('PROVIDER_BACKOFF_JITTER_SECONDS', '0.25')),
+        provider_rate_limit_per_second=float(getenv('PROVIDER_RATE_LIMIT_PER_SECOND', '5.0')),
+        provider_circuit_failure_threshold=int(getenv('PROVIDER_CIRCUIT_FAILURE_THRESHOLD', '3')),
+        provider_circuit_cooldown_seconds=int(getenv('PROVIDER_CIRCUIT_COOLDOWN_SECONDS', '60')),
+        provider_cache_ttl_seconds=int(getenv('PROVIDER_CACHE_TTL_SECONDS', '1800')),
+        provider_max_stale_seconds=int(getenv('PROVIDER_MAX_STALE_SECONDS', '10800')),
     )

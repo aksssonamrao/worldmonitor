@@ -41,7 +41,7 @@ def test_usgs_ingest_creates_sources_and_incidents():
 
 
 def test_planned_ingest_creates_incidents():
-    events = fetch_planned('config/planned_disruptions.yml')
+    events = fetch_planned('../../config/planned_disruptions.yml')
     assert len(events) >= 1
     assert all(isinstance(e, EventSourceCreate) for e in events)
 
@@ -84,15 +84,19 @@ def test_firms_disabled_skips_cleanly(monkeypatch):
 
     settings = Settings(
         database_url='postgresql://', ingest_interval_minutes=15, gdelt_enabled=True, reliefweb_enabled=True, rss_enabled=False,
-        usgs_enabled=True, firms_enabled=False, planned_enabled=False, rss_config_path='x', planned_disruptions_path='config/planned_disruptions.yml',
+        usgs_enabled=True, firms_enabled=False, planned_enabled=False, rss_config_path='x', planned_disruptions_path='../../config/planned_disruptions.yml',
         reliefweb_appname='app', firms_map_key='', focus_countries=['US'], focus_regions=['EUROPE'], gdelt_lookback_hours=72,
         usgs_min_magnitude=4.0, dedup_time_window_hours=6, simhash_strong_max_dist=12, simhash_ambiguous_max_dist=18,
         geohash_precision=6, time_bucket_minutes=60, monitoring_interval_minutes=30, compound_api_url='http://compound_api:8084',
+        provider_connect_timeout_seconds=5.0, provider_read_timeout_seconds=20.0, provider_max_retries=1,
+        provider_backoff_base_seconds=0.01, provider_backoff_max_seconds=0.02, provider_backoff_jitter_seconds=0.0,
+        provider_rate_limit_per_second=100.0, provider_circuit_failure_threshold=3, provider_circuit_cooldown_seconds=60,
+        provider_cache_ttl_seconds=60, provider_max_stale_seconds=600,
     )
     storage = FakeStorage()
 
     async def run_once():
-        counts = await run_ingestion_cycle(settings, storage)
-        assert counts['firms'] == 0
+        result = await run_ingestion_cycle(settings, storage)
+        assert result['counts']['firms'] == 0
 
     asyncio.run(run_once())

@@ -83,8 +83,10 @@ class HazardGenerator:
                         samples_by_hour[ts].append((lat, lon, rec))
                 else:
                     # Some samples are missing; fetch from the upstream API and cache results.
-                    fetched_records = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
-                    stats['points_fetched'] += 1
+                    weather_result = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
+                    fetched_records = weather_result['rows']
+                    if fetched_records:
+                        stats['points_fetched'] += 1
                     for record in fetched_records:
                         ts = record['forecast_ts']
                         if ts in cached_for_point:
@@ -129,4 +131,4 @@ class HazardGenerator:
             return {'run_id': run_id, 'status': 'SUCCESS', **stats, 'polygons_written_per_type_timestep': polygons_written}
         except Exception as exc:
             await self.storage.complete_run(run_id, 'FAILED', stats, str(exc))
-            raise
+            return {'run_id': run_id, 'status': 'FAILED', **stats, 'error': str(exc), 'degraded': True}

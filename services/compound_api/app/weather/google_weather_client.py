@@ -1,34 +1,29 @@
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
-
-class TokenBucket:
-    def __init__(self, rate: float):
-        if rate <= 0:
-            raise ValueError(f"TokenBucket rate must be positive, got {rate!r}")
-        self._interval = 1.0 / rate
-        self._lock = asyncio.Lock()
-        self._next = 0.0
-
-    async def consume(self) -> None:
-        async with self._lock:
-            loop = asyncio.get_running_loop()
-            now = loop.time()
-            if now < self._next:
-                await asyncio.sleep(self._next - now)
-            self._next = max(now, self._next) + self._interval
+from app.provider_client import ProviderClient, RateLimiter
 
 
 class GoogleWeatherClient:
-    def __init__(self, base_url: str, api_key: str, max_qps: float = 5.0):
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.bucket = TokenBucket(max_qps)
-        self.client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0))
+    def __init__(self, settings, storage):
+        self.settings = settings
+        self.storage = storage
+        self.provider_name = 'google_weather'
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.provider_read_timeout_seconds, connect=settings.provider_connect_timeout_seconds)
+        )
+        self.provider_client = ProviderClient(
+            max_retries=settings.provider_max_retries,
+            backoff_base_seconds=settings.provider_backoff_base_seconds,
+            backoff_max_seconds=settings.provider_backoff_max_seconds,
+            jitter_seconds=settings.provider_backoff_jitter_seconds,
+            failure_threshold=settings.provider_circuit_failure_threshold,
+            cooldown_seconds=settings.provider_circuit_cooldown_seconds,
+            rate_limiter=RateLimiter(settings.provider_rate_limit_per_second),
+        )
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -38,42 +33,21 @@ class GoogleWeatherClient:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.aclose()
-    async def fetch_hourly(self, lat: float, lon: float, hours: int) -> list[dict]:
+
+    async def fetch_hourly(self, lat: float, lon: float, hours: int) -> dict:
         params = {
-            'key': self.api_key,
+            'key': self.settings.google_weather_api_key,
             'location.latitude': lat,
             'location.longitude': lon,
             'hours': hours,
         }
-        max_retries = 3
-        last_exc: Exception | None = None
-        for attempt in range(1, max_retries + 1):
-            await self.bucket.consume()
-            try:
-                resp = await self.client.get(f'{self.base_url}/forecast/hours:lookup', params=params)
-            except httpx.TimeoutException as exc:
-                last_exc = exc
-                if attempt < max_retries:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                raise RuntimeError(f'google weather request failed after retries for ({lat},{lon}): {exc!s}') from exc
-            except httpx.RequestError as exc:
-                # Non-timeout network errors (e.g., DNS failure, invalid URL) are treated as non-retryable.
-                raise RuntimeError(f'google weather request failed for ({lat},{lon}): {exc!s}') from exc
+        cache_key = f'{round(lat,4)}:{round(lon,4)}:{hours}'
+        status = await self.storage.get_provider_status(self.provider_name)
 
-            if resp.status_code in (429, 500, 502, 503, 504):
-                last_exc = RuntimeError(
-                    f'google weather exhausted retries for ({lat},{lon}), status={resp.status_code}, body={resp.text[:200]}'
-                )
-                if attempt < max_retries:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                raise last_exc
+        async def _request() -> list[dict]:
+            resp = await self.client.get(f'{self.settings.google_weather_base_url}/forecast/hours:lookup', params=params)
             if resp.status_code >= 400:
-                raise RuntimeError(
-                    f'google weather error for ({lat},{lon}), status={resp.status_code}, body={resp.text[:200]}'
-                )
-
+                raise RuntimeError(f'status={resp.status_code} body={resp.text[:200]}')
             payload = resp.json()
             records = payload.get('hours', [])
             return [
@@ -86,5 +60,34 @@ class GoogleWeatherClient:
                 }
                 for r in records
             ]
-        # Should not reach here, but satisfies type checker.
-        raise RuntimeError(f'google weather request failed after {max_retries} retries for ({lat},{lon})')
+
+        try:
+            rows = await self.provider_client.run(_request, status.get('circuit_open_until'))
+            await self.storage.upsert_provider_cache(
+                self.provider_name,
+                cache_key,
+                {
+                    'rows': [
+                        {**row, 'forecast_ts': row['forecast_ts'].isoformat()}
+                        for row in rows
+                    ]
+                },
+                self.settings.provider_cache_ttl_seconds,
+            )
+            await self.storage.mark_provider_success(self.provider_name)
+            return {'rows': rows, 'degraded': False, 'fetched_at': datetime.now(timezone.utc), 'error': None}
+        except Exception as exc:  # noqa: BLE001
+            failures = await self.storage.mark_provider_failure(self.provider_name, str(exc), None)
+            circuit_open_until = self.provider_client.maybe_open_circuit(failures)
+            if circuit_open_until is not None:
+                await self.storage.mark_provider_failure(self.provider_name, str(exc), circuit_open_until)
+            cache = await self.storage.get_provider_cache(self.provider_name, cache_key)
+            if cache:
+                age_seconds = (datetime.now(timezone.utc) - cache['fetched_at']).total_seconds()
+                if age_seconds <= self.settings.provider_max_stale_seconds:
+                    rows = [
+                        {**row, 'forecast_ts': datetime.fromisoformat(row['forecast_ts'].replace('Z', '+00:00'))}
+                        for row in cache['payload_json'].get('rows', [])
+                    ]
+                    return {'rows': rows, 'degraded': True, 'fetched_at': cache['fetched_at'], 'error': str(exc)}
+            return {'rows': [], 'degraded': True, 'fetched_at': None, 'error': str(exc)}
