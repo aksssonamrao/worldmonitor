@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from os import getenv
 
+from .config_utils import required_env
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -51,7 +53,7 @@ def _as_bool(name: str, default: bool) -> bool:
 
 def load_settings() -> Settings:
     return Settings(
-        database_url=getenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@postgis:5432/worldmonitor'),
+        database_url=required_env('DATABASE_URL', 'ingestor'),
         ingest_interval_minutes=int(getenv('INGEST_INTERVAL_MINUTES', '15')),
         gdelt_enabled=_as_bool('GDELT_ENABLED', True),
         reliefweb_enabled=_as_bool('RELIEFWEB_ENABLED', True),
@@ -73,7 +75,7 @@ def load_settings() -> Settings:
         geohash_precision=int(getenv('GEOHASH_PRECISION', '6')),
         time_bucket_minutes=int(getenv('TIME_BUCKET_MINUTES', '60')),
         monitoring_interval_minutes=int(getenv('MONITORING_INTERVAL_MINUTES', '30')),
-        compound_api_url=getenv('COMPOUND_API_URL', 'http://compound_api:8084').rstrip('/'),
+        compound_api_url=getenv('COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/'),
         provider_connect_timeout_seconds=float(getenv('PROVIDER_CONNECT_TIMEOUT_SECONDS', '5.0')),
         provider_read_timeout_seconds=float(getenv('PROVIDER_READ_TIMEOUT_SECONDS', '20.0')),
         provider_max_retries=int(getenv('PROVIDER_MAX_RETRIES', '3')),

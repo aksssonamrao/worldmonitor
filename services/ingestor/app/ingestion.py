@@ -104,12 +104,28 @@ async def _run_provider(
             stale_seconds = (datetime.now(timezone.utc) - cached['fetched_at']).total_seconds()
             if stale_seconds <= max_stale_seconds:
                 cached_events = [_deserialize_event(item) for item in cached.get('payload_json', {}).get('events', [])]
+                logger.warning(
+                    'provider_degraded_using_cache',
+                    extra={
+                        'event': 'provider_degraded',
+                        'meta': {
+                            'provider': provider_name,
+                            'error': str(exc),
+                            'cache_used': True,
+                            'stale_seconds': stale_seconds,
+                        },
+                    },
+                )
                 return cached_events, True, {
                     'degraded': True,
                     'fetched_at': cached['fetched_at'].isoformat(),
                     'error': str(exc),
                     'cache_used': True,
                 }
+        logger.exception(
+            'provider_degraded_without_cache',
+            extra={'event': 'provider_degraded', 'meta': {'provider': provider_name, 'error': str(exc), 'cache_used': False}},
+        )
         return [], True, {'degraded': True, 'error': str(exc), 'cache_used': False}
 
 

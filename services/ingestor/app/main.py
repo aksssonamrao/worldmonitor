@@ -9,11 +9,14 @@ from typing import Any
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from fastapi import Request
 
 from .config import load_settings
 from .ingestion import run_ingestion_cycle
+from .logging_utils import configure_logging, next_request_id, request_id_var
 from .storage import IngestStorage
 
+configure_logging()
 logger = logging.getLogger(__name__)
 ingestion_lock = asyncio.Lock()
 
@@ -67,6 +70,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='Events Ingestor', lifespan=lifespan)
+
+
+@app.middleware('http')
+async def add_request_context(request: Request, call_next):
+    request_id = request.headers.get('x-request-id') or next_request_id()
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+        response.headers['x-request-id'] = request_id
+        logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
+        return response
+    finally:
+        request_id_var.reset(token)
 
 
 @app.get('/ingestor/health')

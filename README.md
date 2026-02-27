@@ -21,6 +21,15 @@ Services:
 - Valhalla: http://localhost:8002
 - PostGIS: localhost:5432
 
+
+## One-command health check
+
+```bash
+./scripts/health_check.sh
+```
+
+The script checks routing, compound, planner, ingestor, and system status endpoints and prints freshness timestamps when available.
+
 ## Key APIs
 
 - `POST /routes/options` (compound_api): returns `Fastest/Balanced/Safest` with geometry + summary risk.
