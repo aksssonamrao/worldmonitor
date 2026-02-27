@@ -63,7 +63,7 @@ def load_settings() -> Settings:
         planned_enabled=_as_bool('PLANNED_ENABLED', True),
         rss_config_path=getenv('RSS_CONFIG_PATH', '/app/config/rss_feeds.yml'),
         planned_disruptions_path=getenv('PLANNED_DISRUPTIONS_PATH', '/app/config/planned_disruptions.yml'),
-        reliefweb_appname=getenv('RELIEFWEB_APPNAME', 'worldmonitor'),
+        reliefweb_appname=getenv('RELIEFWEB_APPNAME', 'corridorone'),
         firms_map_key=getenv('FIRMS_MAP_KEY', ''),
         focus_countries=[c.strip().upper() for c in getenv('FOCUS_COUNTRIES', 'IN,AE,GB,US').split(',') if c.strip()],
         focus_regions=[r.strip().upper() for r in getenv('FOCUS_REGIONS', 'EUROPE').split(',') if r.strip()],

@@ -35,12 +35,12 @@ class FakeStorage:
 
 def _settings(monkeypatch):
     monkeypatch.setenv('GOOGLE_WEATHER_API_KEY', 'k')
-    monkeypatch.setenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@localhost:5432/worldmonitor')
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://corridorone:corridorone@localhost:5432/corridorone')
     return load_settings()
 
 
 def test_startup_requires_api_key(monkeypatch):
-    monkeypatch.setenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@localhost:5432/worldmonitor')
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://corridorone:corridorone@localhost:5432/corridorone')
     monkeypatch.delenv('GOOGLE_WEATHER_API_KEY', raising=False)
     with pytest.raises(RuntimeError, match='GOOGLE_WEATHER_API_KEY is required'):
         load_settings()
@@ -102,7 +102,7 @@ def test_circuit_breaker_opens_after_failures(monkeypatch):
 
 def test_invalid_event_type_weights_json(monkeypatch):
     monkeypatch.setenv('GOOGLE_WEATHER_API_KEY', 'test-key')
-    monkeypatch.setenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@localhost:5432/worldmonitor')
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://corridorone:corridorone@localhost:5432/corridorone')
     monkeypatch.setenv('EVENT_TYPE_WEIGHTS_JSON', '{invalid')
     with pytest.raises(RuntimeError, match='Invalid value for EVENT_TYPE_WEIGHTS_JSON'):
         load_settings()
@@ -110,7 +110,7 @@ def test_invalid_event_type_weights_json(monkeypatch):
 
 def test_invalid_provider_timeout_settings(monkeypatch):
     monkeypatch.setenv('GOOGLE_WEATHER_API_KEY', 'test-key')
-    monkeypatch.setenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@localhost:5432/worldmonitor')
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://corridorone:corridorone@localhost:5432/corridorone')
     monkeypatch.setenv('PROVIDER_CONNECT_TIMEOUT_SECONDS', '0')
     with pytest.raises(RuntimeError, match='PROVIDER_CONNECT_TIMEOUT_SECONDS'):
         load_settings()

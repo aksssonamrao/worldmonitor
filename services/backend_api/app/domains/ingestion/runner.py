@@ -26,7 +26,7 @@ def _settings() -> dict[str, Any]:
         'focus_regions': [r.strip().upper() for r in os.getenv('FOCUS_REGIONS', 'EUROPE').split(',') if r.strip()],
         'event_lookback_hours': int(os.getenv('EVENT_LOOKBACK_HOURS', '72')),
         'rss_config_path': os.getenv('RSS_CONFIG_PATH', '/app/config/rss_feeds.yml'),
-        'reliefweb_appname': os.getenv('RELIEFWEB_APPNAME', 'worldmonitor'),
+        'reliefweb_appname': os.getenv('RELIEFWEB_APPNAME', 'corridorone'),
         'geohash_precision': int(os.getenv('GEOHASH_PRECISION', '6')),
         'time_bucket_minutes': int(os.getenv('TIME_BUCKET_MINUTES', '60')),
         'dedup_time_window_hours': int(os.getenv('DEDUP_TIME_WINDOW_HOURS', '6')),
