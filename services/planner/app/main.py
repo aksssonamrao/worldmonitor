@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
@@ -363,32 +365,41 @@ async def plan(request: PlanRequest) -> dict[str, Any]:
     return plan_result
 
 
-class AgentBriefIn(BaseModel):
-    shipment: dict[str, Any]
-    selected_route_id: str
-    route_metrics: dict[str, Any] = Field(default_factory=dict)
-    citations: list[dict[str, Any]] = Field(default_factory=list)
+class ShipmentIn(BaseModel):
+    origin: dict[str, float]
+    destination: dict[str, float]
+    depart_time: str
+    arrive_by: str
+    mode: str = 'auto'
+    risk_appetite: float = Field(default=0.5, ge=0, le=1)
 
 
-@app.post('/agent/brief')
-def agent_brief(request: AgentBriefIn) -> dict[str, Any]:
-    citations = request.citations or [{'title': 'Compound API route score', 'url': 'http://compound_api:8090/routes/score'}]
-    markdown = (
-        f"## Shipment Decision Brief\n"
-        f"- Selected route: **{request.selected_route_id}**\n"
-        f"- Origin: {request.shipment.get('origin')}\n"
-        f"- Destination: {request.shipment.get('destination')}\n"
-        f"- Depart / Arrive: {request.shipment.get('depart_time')} -> {request.shipment.get('arrive_by')}\n"
-        f"- Key metrics: `{request.route_metrics}`\n\n"
-        "This brief is generated from deterministic planner and corridor-scoped risk outputs."
-    )
-    return {'markdown': markdown, 'citations': citations}
+class SelectedRouteIn(BaseModel):
+    id: str
+    geometry: dict[str, Any]
+
+
+class MitigationConstraintsIn(BaseModel):
+    avoid_event_types: list[str] = Field(default_factory=list)
+    max_extra_eta_hours: float | None = None
+    max_risk_score: float | None = None
 
 
 class MitigationIn(BaseModel):
-    shipment: dict[str, Any]
-    selected_route: dict[str, Any]
-    candidate_hubs: list[dict[str, Any]] = Field(default_factory=list)
+    shipment: ShipmentIn
+    selected_route: SelectedRouteIn
+    constraints: MitigationConstraintsIn | None = None
+
+
+_fallback_path = Path(__file__).with_name('fallback_hubs.json')
+if _fallback_path.exists():
+    FALLBACK_HUBS = json.loads(_fallback_path.read_text())
+else:
+    FALLBACK_HUBS = [
+        {'id': 'LAX', 'label': 'Los Angeles Logistics Node', 'lat': 34.0522, 'lon': -118.2437},
+        {'id': 'ORD', 'label': 'Chicago Logistics Node', 'lat': 41.8781, 'lon': -87.6298},
+        {'id': 'DFW', 'label': 'Dallas/Fort Worth Logistics Node', 'lat': 32.8998, 'lon': -97.0403},
+    ]
 
 
 class RoutingPlugin:
@@ -400,15 +411,6 @@ class RoutingPlugin:
 
     async def isochrone(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._call('/routing/isochrone', payload)
-
-    async def matrix(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return await self._call('/routing/matrix', payload)
-
-    async def map_match(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return await self._call('/routing/map_match', payload)
-
-    async def optimized_route(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return await self._call('/routing/optimized_route', payload)
 
     async def corridor_score(self, geometry: dict[str, Any], depart_time: str, arrive_by: str) -> dict[str, Any]:
         resp = await self.client.post(
@@ -424,56 +426,307 @@ class RoutingPlugin:
         return resp.json()
 
 
+def _to_utc_iso(dt: datetime) -> str:
+    return dt.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
+
+def _parse_dt(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+
+def _normalize_evidence(score: dict[str, Any], avoid_types: set[str] | None = None) -> tuple[dict[str, Any], list[str], str | None]:
+    avoid_types = avoid_types or set()
+    events = score.get('top_evidence', {}).get('events', [])
+    alerts = score.get('top_evidence', {}).get('alerts', [])
+    hazards = score.get('top_evidence', {}).get('hazards', [])
+    incidents = []
+    citations: list[str] = []
+    dominant_counts: dict[str, int] = {}
+    for item in events:
+        event_type = str(item.get('event_type') or 'unknown').upper()
+        dominant_counts[event_type] = dominant_counts.get(event_type, 0) + 1
+        sources = []
+        if item.get('url'):
+            sources.append({'url': item['url'], 'source': 'compound_events'})
+            citations.append(item['url'])
+        incident = {
+            'id': str(item.get('id', '')),
+            'title': item.get('title', 'untitled incident'),
+            'severity': float(item.get('severity', 0.0)),
+            'confidence': float(item.get('confidence', 0.0)),
+            'start_at': item.get('occurred_at'),
+            'source_count': len(sources),
+            'sources': sources,
+            'event_type': event_type,
+        }
+        if event_type not in avoid_types:
+            incidents.append(incident)
+    dominant_type = None
+    if dominant_counts:
+        dominant_type = max(dominant_counts.items(), key=lambda pair: pair[1])[0]
+
+    normalized_hazards = [
+        {'type': h.get('type', 'hazard'), 'severity': float(h.get('hazard_prob', 0.0)), 'polygon_id': str(h.get('id', ''))}
+        for h in hazards
+    ]
+    normalized_alerts = [
+        {'id': str(a.get('id', '')), 'score': float(a.get('score', 0.0)), 'message': a.get('title', 'alert')}
+        for a in alerts
+    ]
+    for alert in alerts:
+        if alert.get('url'):
+            citations.append(alert['url'])
+    return ({'incidents': incidents[:10], 'hazards': normalized_hazards[:10], 'alerts': normalized_alerts[:10]}, sorted(set(citations)), dominant_type)
+
+
+def _risk_breakdown(score: dict[str, Any]) -> dict[str, float]:
+    summary = score.get('summary_risk', {})
+    return {
+        'weather': float(summary.get('weather', 0.0)),
+        'news': float(summary.get('news', 0.0)),
+        'compound': float(summary.get('compound', 0.0)),
+    }
+
+
+def _objective(risk_total: float, delta_eta_hours: float, risk_appetite: float) -> float:
+    lam = max(0.1, (1.0 - risk_appetite) * 5.0)
+    return risk_total + lam * max(0.0, delta_eta_hours)
+
+
+def _within_constraints(option: dict[str, Any], constraints: MitigationConstraintsIn | None) -> bool:
+    if not constraints:
+        return True
+    if constraints.max_extra_eta_hours is not None and option['delta_eta_hours'] > constraints.max_extra_eta_hours:
+        return False
+    if constraints.max_risk_score is not None and option['risk_total'] > constraints.max_risk_score:
+        return False
+    return True
+
+
+def _simulate_win_rates(options: list[dict[str, Any]], risk_appetite: float, runs: int) -> list[dict[str, Any]]:
+    import random
+
+    rng = random.Random(42)
+    wins = {o['option_id']: 0 for o in options}
+    for _ in range(runs):
+        scores: list[tuple[str, float]] = []
+        for option in options:
+            breakdown = option['risk_breakdown']
+            hazard_mul = rng.uniform(0.85, 1.15)
+            sev_noise = rng.uniform(0.9, 1.1)
+            conf_noise = rng.uniform(0.9, 1.1)
+            perturbed_risk = max(
+                0.0,
+                (breakdown['weather'] * hazard_mul)
+                + (breakdown['news'] * sev_noise * conf_noise)
+                + (breakdown['compound'] * sev_noise),
+            )
+            objective = _objective(perturbed_risk, option['delta_eta_hours'], risk_appetite)
+            scores.append((option['option_id'], objective))
+        winner = min(scores, key=lambda item: item[1])[0]
+        wins[winner] += 1
+    return [
+        {'option_id': key, 'win_pct': round((count / runs) * 100.0, 2)}
+        for key, count in sorted(wins.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+
 @app.post('/agent/mitigation')
 async def agent_mitigation(request: MitigationIn) -> dict[str, Any]:
-    origin = request.shipment.get('origin')
-    destination = request.shipment.get('destination')
-    depart = request.shipment.get('depart_time')
-    arrive = request.shipment.get('arrive_by')
-    if not origin or not destination or not depart or not arrive:
-        raise HTTPException(status_code=422, detail='shipment must include origin, destination, depart_time, and arrive_by')
+    shipment = request.shipment
+    constraints = request.constraints
+    request_id = str(uuid.uuid4())
+    degrade_notes: list[str] = []
+
+    depart = _parse_dt(shipment.depart_time)
+    arrive = _parse_dt(shipment.arrive_by)
+    if depart >= arrive:
+        raise HTTPException(status_code=422, detail='shipment.depart_time must be before shipment.arrive_by')
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         plugin = RoutingPlugin(client)
-        route_payload = {'locations': [origin, destination], 'costing': 'auto', 'alternates': 2}
-        routed = await plugin.route(route_payload)
-        routes = routed.get('routes', [])
 
-        depart_later = []
-        for delta in (6, 12):
-            shifted_depart = (datetime.fromisoformat(depart.replace('Z', '+00:00')) + timedelta(hours=delta)).isoformat()
-            shifted_arrive = (datetime.fromisoformat(arrive.replace('Z', '+00:00')) + timedelta(hours=delta)).isoformat()
-            score = await plugin.corridor_score(request.selected_route['geometry'], shifted_depart, shifted_arrive)
-            depart_later.append({'shift_hours': delta, 'risk_total': score['summary_risk']['total'], 'duration_hours': request.selected_route.get('eta_hours')})
+        baseline_score: dict[str, Any] = {}
+        try:
+            baseline_score = await plugin.corridor_score(request.selected_route.geometry, _to_utc_iso(depart), _to_utc_iso(arrive))
+        except Exception as exc:
+            degrade_notes.append(f'compound_api degraded: {exc.__class__.__name__}')
+            baseline_score = {'summary_risk': {'total': 0.0, 'weather': 0.0, 'news': 0.0, 'compound': 0.0}, 'top_evidence': {'events': [], 'alerts': [], 'hazards': []}}
 
-        alt = routes[1] if len(routes) > 1 else (routes[0] if routes else {'geometry': request.selected_route['geometry'], 'duration_s': request.selected_route.get('eta_hours', 0) * 3600})
-        alt_score = await plugin.corridor_score(alt['geometry'], depart, arrive)
-
-        hubs = request.candidate_hubs or [
-            {'name': 'Port of Los Angeles', 'lat': 33.74, 'lon': -118.27},
-            {'name': 'Port of Long Beach', 'lat': 33.75, 'lon': -118.20},
-            {'name': 'Ontario Logistics Hub', 'lat': 34.06, 'lon': -117.60},
-        ]
-        iso = await plugin.isochrone({'locations': [origin], 'contours': [{'time': 90}], 'costing': 'auto', 'polygons': True})
-        ranked_hubs = [{'name': hub['name'], 'score': idx + 1} for idx, hub in enumerate(hubs)]
-
-        result = {
-            'mitigations': {
-                'depart_later': depart_later,
-                'reroute': {'duration_hours': round(float(alt.get('duration_s', 0)) / 3600.0, 3), 'risk_total': alt_score['summary_risk']['total']},
-                'fallback_hub': ranked_hubs[0],
-            },
-            'markdown_memo': (
-                '## Mitigation Options\n'
-                '- Depart later: compared +6h and +12h windows\n'
-                '- Reroute: evaluated alternate path from Valhalla\n'
-                '- Fallback hub: selected best hub in isochrone reachability.'
-            ),
-            'citations': [
-                {'title': 'Valhalla Route', 'url': f'{ROUTING_API_URL}/routing/route'},
-                {'title': 'Corridor Score', 'url': f'{COMPOUND_API_URL}/routes/score'},
-                {'title': 'Valhalla Isochrone', 'url': f'{ROUTING_API_URL}/routing/isochrone'},
-            ],
-            'isochrone': iso.get('feature_collection', {}),
+        avoid_types = {value.upper() for value in (constraints.avoid_event_types if constraints else [])}
+        base_evidence, base_citations, dominant_type = _normalize_evidence(baseline_score)
+        baseline_eta = (arrive - depart).total_seconds() / 3600.0
+        baseline_risk = float(baseline_score.get('summary_risk', {}).get('total', 0.0))
+        baseline = {
+            'eta_hours': round(baseline_eta, 3),
+            'risk_total': round(baseline_risk, 3),
+            'risk_breakdown': _risk_breakdown(baseline_score),
+            'top_evidence': base_evidence,
         }
-        return result
+
+        candidates: list[dict[str, Any]] = []
+
+        for delta in (6, 12):
+            shifted_depart = depart + timedelta(hours=delta)
+            shifted_arrive = arrive + timedelta(hours=delta)
+            try:
+                score = await plugin.corridor_score(request.selected_route.geometry, _to_utc_iso(shifted_depart), _to_utc_iso(shifted_arrive))
+            except Exception as exc:
+                degrade_notes.append(f'compound_api degraded on depart_later_{delta}h: {exc.__class__.__name__}')
+                score = baseline_score
+            evidence, citations, _ = _normalize_evidence(score)
+            risk_total = float(score.get('summary_risk', {}).get('total', baseline_risk))
+            option = {
+                'option_id': f'depart_later_{delta}h',
+                'label': f'Depart later (+{delta}h)',
+                'geometry': request.selected_route.geometry,
+                'eta_hours': round(baseline_eta + delta, 3),
+                'delta_eta_hours': float(delta),
+                'risk_total': round(risk_total, 3),
+                'delta_risk': round(risk_total - baseline_risk, 3),
+                'risk_breakdown': _risk_breakdown(score),
+                'evidence': evidence,
+                'citations': citations,
+            }
+            if _within_constraints(option, constraints):
+                candidates.append(option)
+
+        try:
+            routed = await plugin.route({'locations': [shipment.origin, shipment.destination], 'costing': shipment.mode, 'alternates': 3})
+            alternatives = routed.get('routes', [])[1:3]
+        except Exception as exc:
+            degrade_notes.append(f'routing_api degraded on alternates: {exc.__class__.__name__}')
+            alternatives = []
+
+        for idx, alt in enumerate(alternatives, start=1):
+            geometry = alt.get('geometry') or request.selected_route.geometry
+            eta_hours = float(alt.get('duration_s', baseline_eta * 3600.0)) / 3600.0
+            try:
+                score = await plugin.corridor_score(geometry, _to_utc_iso(depart), _to_utc_iso(arrive))
+            except Exception as exc:
+                degrade_notes.append(f'compound_api degraded on alt_route_{idx}: {exc.__class__.__name__}')
+                score = baseline_score
+            evidence, citations, _ = _normalize_evidence(score)
+            risk_total = float(score.get('summary_risk', {}).get('total', baseline_risk))
+            option = {
+                'option_id': f'alt_route_{idx}',
+                'label': f'Alternate route {idx}',
+                'geometry': geometry,
+                'eta_hours': round(eta_hours, 3),
+                'delta_eta_hours': round(eta_hours - baseline_eta, 3),
+                'risk_total': round(risk_total, 3),
+                'delta_risk': round(risk_total - baseline_risk, 3),
+                'risk_breakdown': _risk_breakdown(score),
+                'evidence': evidence,
+                'citations': citations,
+            }
+            if _within_constraints(option, constraints):
+                candidates.append(option)
+
+        midpoint = shipment.origin
+        try:
+            coords = request.selected_route.geometry.get('coordinates', [])
+            if len(coords) > 2:
+                mid = coords[len(coords) // 2]
+                midpoint = {'lat': float(mid[1]), 'lon': float(mid[0])}
+            await plugin.isochrone({'locations': [midpoint], 'contours': [{'time': 240}], 'costing': shipment.mode, 'polygons': True})
+        except Exception as exc:
+            degrade_notes.append(f'routing_api degraded on isochrone: {exc.__class__.__name__}')
+
+        hub_rank: list[tuple[float, dict[str, Any]]] = []
+        for hub in FALLBACK_HUBS:
+            try:
+                part1 = await plugin.route({'locations': [shipment.origin, {'lat': hub['lat'], 'lon': hub['lon']}], 'costing': shipment.mode})
+                part2 = await plugin.route({'locations': [{'lat': hub['lat'], 'lon': hub['lon']}, shipment.destination], 'costing': shipment.mode})
+                first = (part1.get('routes') or [{}])[0]
+                second = (part2.get('routes') or [{}])[0]
+                combined = {'type': 'LineString', 'coordinates': (first.get('geometry', {}).get('coordinates', []) + second.get('geometry', {}).get('coordinates', []))}
+                eta_hours = float(first.get('duration_s', 0) + second.get('duration_s', 0)) / 3600.0
+                score = await plugin.corridor_score(combined, _to_utc_iso(depart), _to_utc_iso(arrive))
+                risk_total = float(score.get('summary_risk', {}).get('total', baseline_risk))
+                evidence, citations, _ = _normalize_evidence(score)
+                option = {
+                    'option_id': f"fallback_hub_{hub['id']}",
+                    'label': f"Fallback hub: {hub['label']}",
+                    'geometry': combined,
+                    'eta_hours': round(eta_hours, 3),
+                    'delta_eta_hours': round(eta_hours - baseline_eta, 3),
+                    'risk_total': round(risk_total, 3),
+                    'delta_risk': round(risk_total - baseline_risk, 3),
+                    'risk_breakdown': _risk_breakdown(score),
+                    'evidence': evidence,
+                    'citations': citations,
+                }
+                hub_rank.append((_objective(option['risk_total'], option['delta_eta_hours'], shipment.risk_appetite), option))
+            except Exception as exc:
+                degrade_notes.append(f"fallback hub {hub['id']} degraded: {exc.__class__.__name__}")
+
+        for _, option in sorted(hub_rank, key=lambda item: item[0])[:2]:
+            if _within_constraints(option, constraints):
+                candidates.append(option)
+
+        if dominant_type:
+            avoid_set = set(avoid_types)
+            avoid_set.add(dominant_type)
+            evidence, citations, _ = _normalize_evidence(baseline_score, avoid_set)
+            penalty = sum(1 for item in base_evidence['incidents'] if item.get('event_type') == dominant_type)
+            option = {
+                'option_id': f'avoid_event_type_{dominant_type}',
+                'label': f'Avoid {dominant_type} corridors',
+                'geometry': request.selected_route.geometry,
+                'eta_hours': round(baseline_eta + 1.0, 3),
+                'delta_eta_hours': 1.0,
+                'risk_total': round(max(0.0, baseline_risk - penalty * 2.0), 3),
+                'delta_risk': round(max(0.0, baseline_risk - penalty * 2.0) - baseline_risk, 3),
+                'risk_breakdown': baseline['risk_breakdown'],
+                'evidence': evidence,
+                'citations': citations,
+            }
+            if _within_constraints(option, constraints):
+                candidates.append(option)
+
+        ranked = sorted(candidates, key=lambda option: _objective(option['risk_total'], option['delta_eta_hours'], shipment.risk_appetite))[:3]
+        if not ranked:
+            ranked = [
+                {
+                    'option_id': 'depart_later_6h',
+                    'label': 'Depart later (+6h)',
+                    'geometry': request.selected_route.geometry,
+                    'eta_hours': round(baseline_eta + 6, 3),
+                    'delta_eta_hours': 6.0,
+                    'risk_total': round(baseline_risk, 3),
+                    'delta_risk': 0.0,
+                    'risk_breakdown': baseline['risk_breakdown'],
+                    'evidence': base_evidence,
+                    'citations': base_citations,
+                }
+            ]
+
+        win_rate = _simulate_win_rates(ranked, shipment.risk_appetite, 100)
+        recommended = ranked[0]['option_id']
+
+        if os.getenv('OPENAI_API_KEY', '').strip():
+            narrative_markdown = f"Recommended **{recommended}** based on objective optimization over risk and ETA tradeoff."
+        else:
+            narrative_markdown = (
+                f"### Mitigation Recommendation\n"
+                f"- Baseline risk: **{baseline['risk_total']:.2f}**\n"
+                f"- Recommended option: **{recommended}**\n"
+                f"- Objective: minimize `risk_total + λ*delta_eta_hours` with λ from risk appetite."
+            )
+
+        if degrade_notes:
+            narrative_markdown += "\n\n_Degraded mode: " + '; '.join(sorted(set(degrade_notes))) + "_"
+
+        return {
+            'request_id': request_id,
+            'baseline': baseline,
+            'options': ranked,
+            'recommended_option_id': recommended,
+            'robustness': {
+                'runs': 100,
+                'win_rate': win_rate,
+                'sensitivity': {'hazard_multiplier': 'uniform[0.85,1.15]', 'event_severity_noise': 'uniform[0.9,1.1] + confidence uniform[0.9,1.1]'},
+            },
+            'narrative_markdown': narrative_markdown,
+        }

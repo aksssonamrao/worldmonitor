@@ -21,6 +21,25 @@ type RouteScore = {
   top_evidence: { events: Array<any>; alerts: Array<any>; hazards: Array<any> };
 };
 
+type MitigationOption = {
+  option_id: string;
+  label: string;
+  geometry: LineStringGeometry;
+  eta_hours: number;
+  delta_eta_hours: number;
+  risk_total: number;
+  delta_risk: number;
+  evidence: { incidents: Array<any>; hazards: Array<any>; alerts: Array<any> };
+  citations: string[];
+};
+
+type MitigationResponse = {
+  baseline: { eta_hours: number; risk_total: number };
+  options: MitigationOption[];
+  recommended_option_id: string;
+  robustness: { win_rate: Array<{ option_id: string; win_pct: number }> };
+};
+
 export class App {
   private container: HTMLElement;
   private map!: MaplibreMap;
@@ -29,6 +48,7 @@ export class App {
   private selectedRouteId: string | null = null;
   private scoreByRoute = new globalThis.Map<string, RouteScore>();
   private mode: Mode = 'default';
+  private mitigation: MitigationResponse | null = null;
   private selectedAoiId: string | null = null;
   private aoiGeometries = new globalThis.Map<string, any>();
 
@@ -50,10 +70,11 @@ export class App {
         <label>Arrive by<input id="arrive" type="datetime-local"></label>
         <label>Risk appetite <input id="risk" type="range" min="0" max="1" step="0.1" value="0.5"></label>
         <button id="generate">Generate Options</button>
+        <button id="mitigate">Mitigate</button>
         <label>Mode<select id="mode"><option value="default">Default</option><option value="fallback">Fallback</option><option value="multi-stop">Multi-stop</option></select></label>
         <label>Stops (lat,lon per line)<textarea id="stops" rows="4" placeholder="36.0,-120.0"></textarea></label>
       </aside>
-      <aside class="panel panel-right"><h3>Route Options</h3><div id="route-cards"></div><h4>Issues along route</h4><div id="issues"></div><hr><h3>Watchlists</h3><label>Name<input id="aoi-name" value="Primary AOI"></label><label>Radius km<input id="aoi-radius" value="80"></label><button id="aoi-create">Create AOI from map center</button><button id="aoi-snapshot">Manual Snapshot</button><button id="aoi-memo">Generate memo</button><div id="aoi-list"></div><h4>Changes</h4><div id="aoi-changes"></div></aside>
+      <aside class="panel panel-right"><h3>Route Options</h3><div id="route-cards"></div><div id="mitigation-panel"></div><h4>Issues along route</h4><div id="issues"></div><hr><h3>Watchlists</h3><label>Name<input id="aoi-name" value="Primary AOI"></label><label>Radius km<input id="aoi-radius" value="80"></label><button id="aoi-create">Create AOI from map center</button><button id="aoi-snapshot">Manual Snapshot</button><button id="aoi-memo">Generate memo</button><div id="aoi-list"></div><h4>Changes</h4><div id="aoi-changes"></div></aside>
       <section class="drawer"><h3>Evidence</h3><div id="evidence"></div></section>
       <div class="legend">Risk 0..100<div class="gradient"></div></div>
     </main>`;
@@ -137,6 +158,9 @@ export class App {
         this.setStatus(error instanceof Error ? error.message : 'Failed to generate routes');
       });
     });
+    this.container.querySelector('#mitigate')?.addEventListener('click', () => {
+      this.runMitigation().catch((error: unknown) => this.setStatus(error instanceof Error ? error.message : 'Mitigation failed'));
+    });
 
     this.container.querySelector('#aoi-create')?.addEventListener('click', () => this.createAoiFromCenter().catch(console.error));
     this.container.querySelector('#aoi-snapshot')?.addEventListener('click', () => this.createSnapshot().catch(console.error));
@@ -206,7 +230,9 @@ export class App {
       if (score) this.scoreByRoute.set(route.id, score);
     }
 
+    this.mitigation = null;
     this.renderRouteCards();
+    this.renderMitigationPanel();
     this.renderRoutesLayer();
     this.setStatus('Route options loaded');
   }
@@ -444,6 +470,91 @@ export class App {
       this.map.addSource('multi-stop-route', { type: 'geojson', data: fc as any });
       this.map.addLayer({ id: 'multi-stop-route-line', type: 'line', source: 'multi-stop-route', paint: { 'line-width': 6, 'line-color': ['interpolate', ['linear'], ['get', 'score'], 0, '#2dc937', 100, '#cc3232'] } });
     }
+  }
+
+
+
+  private getPlannerApiBase(): string {
+    return (import.meta.env.VITE_PLANNER_API_URL || 'http://localhost:8091').replace(/\/$/, '');
+  }
+
+  private async runMitigation(): Promise<void> {
+    if (!this.selectedRouteId) throw new Error('Select a route first');
+    const route = this.routes.find((item) => item.id === this.selectedRouteId);
+    if (!route) throw new Error('Selected route unavailable');
+    const origin = this.parsePoint((this.container.querySelector('#origin') as HTMLInputElement).value);
+    const destination = this.parsePoint((this.container.querySelector('#destination') as HTMLInputElement).value);
+    const depart = this.parseDateInput((this.container.querySelector('#depart') as HTMLInputElement).value, 'Depart time');
+    const arrive = this.parseDateInput((this.container.querySelector('#arrive') as HTMLInputElement).value, 'Arrive by');
+    const risk = Number((this.container.querySelector('#risk') as HTMLInputElement).value);
+    const response = await this.safeFetchJson<MitigationResponse>(`${this.getPlannerApiBase()}/agent/mitigation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shipment: { origin, destination, depart_time: depart, arrive_by: arrive, mode: 'auto', risk_appetite: risk }, selected_route: { id: route.id, geometry: route.geometry } }),
+    });
+    if (!response) return;
+    this.mitigation = response;
+    this.renderMitigationPanel();
+  }
+
+  private renderMitigationPanel(): void {
+    const container = this.container.querySelector('#mitigation-panel') as HTMLElement;
+    if (!container) return;
+    container.replaceChildren();
+    if (!this.mitigation) return;
+
+    const summary = document.createElement('div');
+    summary.innerHTML = `<h4>Mitigation</h4><div>Baseline risk ${this.mitigation.baseline.risk_total.toFixed(1)} → Recommended <b>${this.mitigation.recommended_option_id}</b></div>`;
+    container.appendChild(summary);
+
+    this.mitigation.options.forEach((option) => {
+      const row = document.createElement('div');
+      row.className = 'issue';
+      const topWin = this.mitigation?.robustness.win_rate.find((item) => item.option_id === option.option_id)?.win_pct ?? 0;
+      row.innerHTML = `<div><b>${option.label}</b> · Δη ${option.delta_eta_hours.toFixed(1)}h · Δrisk ${option.delta_risk.toFixed(1)} · win ${topWin.toFixed(1)}%</div>`;
+      const apply = document.createElement('button');
+      apply.textContent = 'Apply option';
+      apply.onclick = () => this.applyMitigationOption(option);
+      row.appendChild(apply);
+      const citations = document.createElement('div');
+      option.citations.slice(0, 3).forEach((url) => {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'citation';
+        citations.appendChild(link);
+        citations.appendChild(document.createTextNode(' '));
+      });
+      row.appendChild(citations);
+      container.appendChild(row);
+    });
+  }
+
+  private applyMitigationOption(option: MitigationOption): void {
+    const selected = this.routes.find((route) => route.id === this.selectedRouteId);
+    if (!selected) return;
+    selected.geometry = option.geometry;
+    selected.eta_hours = option.eta_hours;
+    selected.summary_risk.total = option.risk_total;
+    this.renderRoutesLayer();
+    this.selectRoute(selected.id, false);
+
+    const evidence = this.container.querySelector('#evidence') as HTMLElement;
+    evidence.replaceChildren();
+    ['incidents', 'alerts', 'hazards'].forEach((bucket) => {
+      const section = document.createElement('div');
+      section.innerHTML = `<strong>${bucket}</strong>`;
+      const list = document.createElement('ul');
+      (option.evidence as any)[bucket].slice(0, 6).forEach((item: any) => {
+        const li = document.createElement('li');
+        li.textContent = String(item.title || item.type || item.message || item.id);
+        list.appendChild(li);
+      });
+      section.appendChild(list);
+      evidence.appendChild(section);
+    });
+    this.setStatus('Mitigation option applied');
   }
 
   private async loadEvidenceLayers(): Promise<void> {
