@@ -11,8 +11,8 @@ export const REFRESH_INTERVALS = {
 export const MONITOR_COLORS = ['#44ff88', '#ff8844', '#4488ff', '#ff44ff', '#ffff44'];
 
 export const STORAGE_KEYS = {
-  panels: 'worldmonitor-panels',
-  monitors: 'worldmonitor-monitors',
-  mapLayers: 'worldmonitor-layers',
-  disabledFeeds: 'worldmonitor-disabled-feeds',
+  panels: 'corridorone-panels',
+  monitors: 'corridorone-monitors',
+  mapLayers: 'corridorone-layers',
+  disabledFeeds: 'corridorone-disabled-feeds',
 } as const;

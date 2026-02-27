@@ -11,11 +11,11 @@ const VARIANT_META: Record<string, {
   features: string[];
 }> = {
   world: {
-    title: 'World Monitor - Real-Time Global Intelligence Dashboard',
+    title: 'CorridorOne - Real-Time Global Intelligence Dashboard',
     description: 'Real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data. OSINT in one view.',
     keywords: 'global intelligence, geopolitical dashboard, world news, market data, military bases, nuclear facilities, undersea cables, conflict zones, real-time monitoring, situation awareness, OSINT, flight tracking, AIS ships, earthquake monitor, protest tracker, power outages, oil prices, government spending',
-    url: 'https://worldmonitor.app/',
-    siteName: 'World Monitor',
+    url: 'https://corridorone.app/',
+    siteName: 'CorridorOne',
     features: [
       'Real-time news aggregation',
       'Stock market tracking',
@@ -35,7 +35,7 @@ const VARIANT_META: Record<string, {
     title: 'Tech Monitor - Real-Time AI & Tech Industry Dashboard',
     description: 'Real-time AI and tech industry dashboard tracking tech giants, AI labs, startup ecosystems, funding rounds, and tech events worldwide.',
     keywords: 'tech dashboard, AI industry, startup ecosystem, tech companies, AI labs, venture capital, tech events, tech conferences, cloud infrastructure, datacenters, tech layoffs, funding rounds, unicorns, FAANG, tech HQ, accelerators, Y Combinator, tech news',
-    url: 'https://tech.worldmonitor.app/',
+    url: 'https://tech.corridorone.app/',
     siteName: 'Tech Monitor',
     features: [
       'Tech news aggregation',
@@ -74,9 +74,9 @@ function htmlVariantPlugin(): Plugin {
         .replace(/<meta name="twitter:url" content=".*?" \/>/, `<meta name="twitter:url" content="${meta.url}" />`)
         .replace(/<meta name="twitter:title" content=".*?" \/>/, `<meta name="twitter:title" content="${meta.title}" />`)
         .replace(/<meta name="twitter:description" content=".*?" \/>/, `<meta name="twitter:description" content="${meta.description}" />`)
-        .replace(/"name": "World Monitor"/, `"name": "${meta.siteName}"`)
-        .replace(/"alternateName": "WorldMonitor"/, `"alternateName": "${meta.siteName.replace(' ', '')}"`)
-        .replace(/"url": "https:\/\/worldmonitor\.app\/"/, `"url": "${meta.url}"`)
+        .replace(/"name": "CorridorOne"/, `"name": "${meta.siteName}"`)
+        .replace(/"alternateName": "CorridorOne"/, `"alternateName": "${meta.siteName.replace(' ', '')}"`)
+        .replace(/"url": "https:\/\/corridorone\.app\/"/, `"url": "${meta.url}"`)
         .replace(/"description": "Real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data."/, `"description": "${meta.description}"`)
         .replace(/"featureList": \[[\s\S]*?\]/, `"featureList": ${JSON.stringify(meta.features, null, 8).replace(/\n/g, '\n      ')}`);
     },

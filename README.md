@@ -1,6 +1,6 @@
-# World Monitor — Map-first Shipment Route Risk Planner
+# CorridorOne — Map-first Shipment Route Risk Planner
 
-World Monitor is a self-hosted shipment planning product where the map is primary:
+CorridorOne is a self-hosted shipment planning product where the map is primary:
 - Build shipment
 - Generate 3 route options
 - Inspect route risk overlays and evidence
