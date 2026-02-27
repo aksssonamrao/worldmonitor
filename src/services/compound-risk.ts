@@ -15,6 +15,20 @@ export interface CompoundAlertProperties {
 
 const COMPOUND_API_URL = import.meta.env.VITE_COMPOUND_API_URL as string | undefined;
 
+export interface CompoundSystemStatus {
+  provider_status: Array<{
+    provider: string;
+    last_success_at: string | null;
+    last_error_at: string | null;
+    last_error?: string | null;
+    consecutive_failures: number;
+    circuit_open_until: string | null;
+  }>;
+  events_freshness: string | null;
+  hazards_freshness: string | null;
+  alerts_freshness: string | null;
+}
+
 async function call(path: string, init?: RequestInit): Promise<Response> {
   if (!COMPOUND_API_URL) throw new Error('VITE_COMPOUND_API_URL is not configured.');
   const controller = new AbortController();
@@ -51,5 +65,11 @@ export async function refreshCompoundHazards(
     body: JSON.stringify({ run_id: runId, bbox, timestep_hours: timestepHours, hazard_types: hazardTypes }),
   });
   if (!response.ok) throw new Error(`Hazard generation failed: ${response.status}`);
+  return response.json();
+}
+
+export async function fetchCompoundSystemStatus(): Promise<CompoundSystemStatus> {
+  const response = await call('/system/status');
+  if (!response.ok) throw new Error(`System status request failed: ${response.status}`);
   return response.json();
 }

@@ -96,6 +96,29 @@ class FakeStorage:
                 return event
         return None
 
+
+    async def get_provider_status(self, provider):
+        return {'provider': provider, 'consecutive_failures': 0, 'circuit_open_until': None}
+
+    async def upsert_provider_cache(self, provider, cache_key, payload, ttl_seconds):
+        self.cache[(provider, cache_key)] = {'payload_json': payload, 'fetched_at': datetime.now(timezone.utc)}
+
+    async def mark_provider_success(self, provider):
+        return None
+
+    async def mark_provider_failure(self, provider, error, circuit_open_until):
+        return 1
+
+    async def get_provider_cache(self, provider, cache_key):
+        return self.cache.get((provider, cache_key))
+
+    async def list_provider_status(self):
+        return [{'provider': 'google_weather', 'last_success_at': datetime.now(timezone.utc), 'last_error_at': None, 'last_error': None, 'consecutive_failures': 0, 'circuit_open_until': None}]
+
+    async def freshness_timestamps(self):
+        now = datetime.now(timezone.utc)
+        return {'events_freshness': now, 'hazards_freshness': now, 'alerts_freshness': now}
+
     async def list_ingestion_state(self):
         return {'gdelt': {'cursor': {'last_run': '2026-01-01T00:00:00Z'}, 'updated_at': '2026-01-01T00:00:00Z'}}
 
@@ -190,7 +213,7 @@ class FakeWeatherClient:
     async def fetch_hourly(self, lat, lon, hours):
         self.calls += 1
         now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-        return [{'forecast_ts': now + timedelta(hours=h), 'wind_kph': 80.0, 'precip_mm_hr': 15.0, 'temp_c': 40.0, 'humidity': 40.0} for h in range(hours + 1)]
+        return {'rows': [{'forecast_ts': now + timedelta(hours=h), 'wind_kph': 80.0, 'precip_mm_hr': 15.0, 'temp_c': 40.0, 'humidity': 40.0} for h in range(hours + 1)], 'degraded': False, 'fetched_at': now, 'error': None}
 
 
 @pytest.fixture
@@ -205,6 +228,10 @@ def configured_app():
         heat_threshold_c=38, heat_max_c=48, forecast_hours=24, timestep_hours=[0, 6, 12, 24],
         default_bbox=(72.0, 8.0, 73.0, 9.0), max_bbox_area_deg2=50, max_qps=5, event_lookback_hours=72,
         alert_score_threshold=20, event_type_weights={'PROTEST': 1.2, 'DISASTER': 1.4, 'OTHER': 1.0, 'CONFLICT': 1.5, 'STRIKE': 1.2, 'OUTAGE': 1.3, 'ACCIDENT': 1.1},
+        provider_connect_timeout_seconds=5.0, provider_read_timeout_seconds=20.0, provider_max_retries=1,
+        provider_backoff_base_seconds=0.01, provider_backoff_max_seconds=0.02, provider_backoff_jitter_seconds=0.0,
+        provider_rate_limit_per_second=100.0, provider_circuit_failure_threshold=3, provider_circuit_cooldown_seconds=60,
+        provider_cache_ttl_seconds=60, provider_max_stale_seconds=600,
     )
     app.state.weather_api_configured = True
     app.state.settings = settings

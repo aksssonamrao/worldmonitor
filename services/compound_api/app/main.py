@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
         storage = Storage(settings.database_url)
         await storage.connect()
         app.state.storage = storage
-        app.state.weather_client = GoogleWeatherClient(settings.google_weather_base_url, settings.google_weather_api_key, settings.max_qps)
+        app.state.weather_client = GoogleWeatherClient(settings, app.state.storage)
         app.state.generator = HazardGenerator(settings, app.state.storage, app.state.weather_client)
     else:
         app.state.storage = None
@@ -159,6 +159,30 @@ async def compound_health() -> dict[str, Any]:
         'ingestion_state': ingestion_state,
     }
 
+
+
+
+@app.get('/system/status')
+async def system_status() -> dict[str, Any]:
+    storage = getattr(app.state, 'storage', None)
+    if storage is None:
+        return {'provider_status': [], 'events_freshness': None, 'hazards_freshness': None, 'alerts_freshness': None}
+    provider_status = await storage.list_provider_status()
+    freshness = await storage.freshness_timestamps()
+    return {
+        'provider_status': [
+            {
+                **row,
+                'last_success_at': row['last_success_at'].isoformat() if row.get('last_success_at') else None,
+                'last_error_at': row['last_error_at'].isoformat() if row.get('last_error_at') else None,
+                'circuit_open_until': row['circuit_open_until'].isoformat() if row.get('circuit_open_until') else None,
+            }
+            for row in provider_status
+        ],
+        'events_freshness': freshness['events_freshness'].isoformat() if freshness.get('events_freshness') else None,
+        'hazards_freshness': freshness['hazards_freshness'].isoformat() if freshness.get('hazards_freshness') else None,
+        'alerts_freshness': freshness['alerts_freshness'].isoformat() if freshness.get('alerts_freshness') else None,
+    }
 
 @app.post('/compound/hazards/generate')
 async def generate_hazards(body: dict[str, Any]) -> dict[str, Any]:

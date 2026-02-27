@@ -82,18 +82,26 @@ class HazardGenerator:
                     for ts, rec in cached_for_point.items():
                         samples_by_hour[ts].append((lat, lon, rec))
                 else:
-                    # Some samples are missing; fetch from the upstream API and cache results.
-                    fetched_records = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
-                    stats['points_fetched'] += 1
-                    for record in fetched_records:
-                        ts = record['forecast_ts']
+                    # Some samples are missing; fetch from the upstream API and merge with cache.
+                    weather_result = await self.weather_client.fetch_hourly(lat, lon, self.settings.forecast_hours)
+                    fetched_records = weather_result['rows']
+                    fetched_by_ts = {record['forecast_ts']: record for record in fetched_records}
+
+                    non_cached_rows = 0
+                    all_timestamps = set(cached_for_point.keys()) | set(fetched_by_ts.keys())
+                    for ts in all_timestamps:
                         if ts in cached_for_point:
-                            # This timestamp was already in cache (partial coverage); prefer cached copy.
                             stats['cache_hits'] += 1
                             samples_by_hour[ts].append((lat, lon, cached_for_point[ts]))
-                        else:
-                            await self.storage.upsert_sample(lat, lon, record)
-                            samples_by_hour[ts].append((lat, lon, record))
+                            continue
+
+                        record = fetched_by_ts[ts]
+                        non_cached_rows += 1
+                        await self.storage.upsert_sample(lat, lon, record)
+                        samples_by_hour[ts].append((lat, lon, record))
+
+                    if non_cached_rows > 0:
+                        stats['points_fetched'] += 1
 
             await self.storage.clear_hazards(run_id)
             for timestep in timesteps:
@@ -129,4 +137,4 @@ class HazardGenerator:
             return {'run_id': run_id, 'status': 'SUCCESS', **stats, 'polygons_written_per_type_timestep': polygons_written}
         except Exception as exc:
             await self.storage.complete_run(run_id, 'FAILED', stats, str(exc))
-            raise
+            return {'run_id': run_id, 'status': 'FAILED', **stats, 'error': str(exc), 'degraded': True}
