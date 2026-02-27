@@ -13,7 +13,7 @@ export interface CompoundAlertProperties {
   [key: string]: unknown;
 }
 
-const COMPOUND_API_URL = import.meta.env.VITE_COMPOUND_API_URL as string | undefined;
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
 export interface CompoundSystemStatus {
   provider_status: Array<{
@@ -30,11 +30,11 @@ export interface CompoundSystemStatus {
 }
 
 async function call(path: string, init?: RequestInit): Promise<Response> {
-  if (!COMPOUND_API_URL) throw new Error('VITE_COMPOUND_API_URL is not configured.');
+  if (!API_URL) throw new Error('VITE_API_URL is not configured.');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    return await fetch(`${COMPOUND_API_URL}${path}`, { ...init, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
+    return await fetch(`${API_URL}${path}`, { ...init, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
   } finally {
     clearTimeout(timer);
   }

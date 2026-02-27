@@ -23,7 +23,7 @@ export interface PlannerResponse {
   llm_summary: string | null;
 }
 
-const PLANNER_API_URL = import.meta.env.VITE_PLANNER_API_URL as string | undefined;
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
 const DEMO_CASE = {
   vehicles: [
@@ -44,8 +44,8 @@ const DEMO_CASE = {
 };
 
 export async function generatePlannerPlan(alertId: string, runId: string, timestep: number): Promise<PlannerResponse> {
-  if (!PLANNER_API_URL) {
-    throw new Error('VITE_PLANNER_API_URL is not configured.');
+  if (!API_URL) {
+    throw new Error('VITE_API_URL is not configured.');
   }
 
   const payload = {
@@ -57,7 +57,7 @@ export async function generatePlannerPlan(alertId: string, runId: string, timest
     risk_model: { mode: 'polygon_intersection', sample_points_per_leg: 10 },
   };
 
-  const response = await fetch(`${PLANNER_API_URL}/plan`, {
+  const response = await fetch(`${API_URL}/api/plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

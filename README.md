@@ -15,10 +15,11 @@ docker compose up --build
 
 Services:
 - Frontend: http://localhost:3000
-- Compound API: http://localhost:8090/compound/health
-- Planner API (+ `/agent/brief`, `/agent/mitigation`): http://localhost:8091/health
-- Routing API (Valhalla wrapper): http://localhost:8093/health
-- Valhalla: http://localhost:8002
+- Backend API (frontend entrypoint): http://localhost:8080/health
+- Compound + Planner + Agent APIs: served by backend_api (`/api/*`, `/compound/*`, `/system/*`, `/aois*`)
+- Valhalla routing: internal-only (`valhalla:8002`)
+- Scheduler (job enqueuer): internal-only (`scheduler`)
+- Worker (job queue consumer): internal-only (`worker`)
 - PostGIS: localhost:5432
 
 
@@ -28,14 +29,24 @@ Services:
 ./scripts/health_check.sh
 ```
 
-The script checks routing, compound, planner, ingestor, and system status endpoints and prints freshness timestamps when available.
+The script checks compound, planner, and system status endpoints and prints freshness timestamps when available. Frontend requests should target backend_api (`VITE_API_URL`) only.
 
 ## Key APIs
 
-- `POST /routes/options` (compound_api): returns `Fastest/Balanced/Safest` with geometry + summary risk.
-- `POST /routes/score` (compound_api): corridor-scoped risk scoring with `segment_scores` and `top_evidence`.
-- `POST /plan` (planner): deterministic planner; accepts `selected_route_geometry`.
-- `POST /agent/brief` (planner): template markdown brief + citations (works without OpenAI key).
+- `POST /api/routes/options` (backend_api): returns `Fastest/Balanced/Safest` with geometry + summary risk.
+- `POST /api/routes/score` (backend_api): corridor-scoped risk scoring with `segment_scores` and `top_evidence` + cache behavior.
+- `POST /api/plan` (backend_api): deterministic planner; accepts `selected_route_geometry`.
+- `POST /api/agent/brief` and `POST /api/agent/mitigation` (backend_api).
+
+
+## Durable Job Queue
+
+- Queue storage is Postgres table `job_queue` (created idempotently on backend startup).
+- Worker service polls/claims jobs using `FOR UPDATE SKIP LOCKED` and retries with exponential backoff + jitter.
+- Internal admin endpoints (disabled unless `ADMIN_API_KEY` is set):
+  - `POST /internal/jobs/enqueue`
+  - `GET /internal/jobs/stats`
+  - `POST /internal/jobs/reap-stale`
 
 ## Tests
 
