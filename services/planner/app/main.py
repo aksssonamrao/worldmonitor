@@ -11,14 +11,30 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from pydantic import BaseModel, Field
+from app.logging_utils import configure_logging, next_request_id, request_id_var
 
 app = FastAPI(title='Planner API')
+configure_logging('planner')
 logger = logging.getLogger(__name__)
 ROUTING_API_URL = os.getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
 COMPOUND_API_URL = os.getenv('COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/')
+
+
+@app.middleware('http')
+async def add_request_context(request: Request, call_next):
+    request_id = request.headers.get('x-request-id') or next_request_id()
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers['x-request-id'] = request_id
+    logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
+    return response
 
 # Configure CORS allowlist from environment variable, e.g.:
 # PLANNER_CORS_ORIGINS="https://frontend.example.com,http://localhost:3000"

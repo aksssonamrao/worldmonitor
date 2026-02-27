@@ -9,13 +9,16 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi import Request
 import httpx
 
 from app.config import Settings, load_settings
 from app.hazards.generator import HazardGenerator
+from app.logging_utils import configure_logging, next_request_id, request_id_var
 from app.storage import Storage
 from app.weather.google_weather_client import GoogleWeatherClient
 
+configure_logging('compound_api')
 logger = logging.getLogger(__name__)
 ROUTING_API_URL = getenv('ROUTING_API_URL', 'http://routing_api:8093').rstrip('/')
 
@@ -65,6 +68,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='Compound API', lifespan=lifespan)
+
+
+@app.middleware('http')
+async def add_request_context(request: Request, call_next):
+    request_id = request.headers.get('x-request-id') or next_request_id()
+    token = request_id_var.set(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers['x-request-id'] = request_id
+    logger.info('http_request', extra={'event': 'http_request', 'meta': {'path': request.url.path, 'method': request.method, 'status_code': response.status_code}})
+    return response
 
 
 class PointIn(BaseModel):

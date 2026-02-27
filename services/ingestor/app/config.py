@@ -49,9 +49,16 @@ def _as_bool(name: str, default: bool) -> bool:
     return raw.lower() in {'1', 'true', 'yes', 'on'}
 
 
+def _required(name: str) -> str:
+    value = getenv(name, '').strip()
+    if not value:
+        raise RuntimeError(f'{name} is required but missing. Set it in environment/.env before starting ingestor.')
+    return value
+
+
 def load_settings() -> Settings:
     return Settings(
-        database_url=getenv('DATABASE_URL', 'postgresql://worldmonitor:worldmonitor@postgis:5432/worldmonitor'),
+        database_url=_required('DATABASE_URL'),
         ingest_interval_minutes=int(getenv('INGEST_INTERVAL_MINUTES', '15')),
         gdelt_enabled=_as_bool('GDELT_ENABLED', True),
         reliefweb_enabled=_as_bool('RELIEFWEB_ENABLED', True),
@@ -73,7 +80,7 @@ def load_settings() -> Settings:
         geohash_precision=int(getenv('GEOHASH_PRECISION', '6')),
         time_bucket_minutes=int(getenv('TIME_BUCKET_MINUTES', '60')),
         monitoring_interval_minutes=int(getenv('MONITORING_INTERVAL_MINUTES', '30')),
-        compound_api_url=getenv('COMPOUND_API_URL', 'http://compound_api:8084').rstrip('/'),
+        compound_api_url=getenv('COMPOUND_API_URL', 'http://compound_api:8090').rstrip('/'),
         provider_connect_timeout_seconds=float(getenv('PROVIDER_CONNECT_TIMEOUT_SECONDS', '5.0')),
         provider_read_timeout_seconds=float(getenv('PROVIDER_READ_TIMEOUT_SECONDS', '20.0')),
         provider_max_retries=int(getenv('PROVIDER_MAX_RETRIES', '3')),

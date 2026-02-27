@@ -1,6 +1,7 @@
 services:
   postgis:
     image: postgis/postgis:16-3.4
+    restart: unless-stopped
     environment:
       POSTGRES_DB: worldmonitor
       POSTGRES_USER: worldmonitor
@@ -36,6 +37,7 @@ services:
       context: ./services/routing_api
     environment:
       VALHALLA_URL: ${VALHALLA_URL:-http://valhalla:8002}
+    restart: unless-stopped
     ports:
       - "8093:8093"
     depends_on:
@@ -73,6 +75,7 @@ services:
       ALERT_SCORE_THRESHOLD: ${ALERT_SCORE_THRESHOLD:-20}
       EVENT_TYPE_WEIGHTS_JSON: ${EVENT_TYPE_WEIGHTS_JSON:-{"PROTEST":1.2,"STRIKE":1.2,"CONFLICT":1.5,"DISASTER":1.4,"OUTAGE":1.3,"ACCIDENT":1.1,"OTHER":1.0}}
       ROUTING_API_URL: ${ROUTING_API_URL:-http://routing_api:8093}
+    restart: unless-stopped
     ports:
       - "8090:8090"
     depends_on:
@@ -100,10 +103,14 @@ services:
       FOCUS_COUNTRIES: ${FOCUS_COUNTRIES:-IN,AE,GB,US}
       FOCUS_REGIONS: ${FOCUS_REGIONS:-EUROPE}
       EVENT_LOOKBACK_HOURS: ${EVENT_LOOKBACK_HOURS:-72}
+      COMPOUND_API_URL: ${COMPOUND_API_URL_BACKEND:-http://compound_api:8090}
+    restart: unless-stopped
     expose:
       - "8092"
     depends_on:
       postgis:
+        condition: service_healthy
+      compound_api:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8092/ingestor/health')\" || exit 1"]
@@ -121,6 +128,7 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       ROUTING_API_URL: ${ROUTING_API_URL:-http://routing_api:8093}
       COMPOUND_API_URL: ${COMPOUND_API_URL_BACKEND:-http://compound_api:8090}
+    restart: unless-stopped
     ports:
       - "8091:8091"
     depends_on:
@@ -144,6 +152,7 @@ services:
         VITE_PLANNER_API_URL: ${VITE_PLANNER_API_URL:-http://localhost:8091}
     ports:
       - "3000:3000"
+    restart: unless-stopped
     depends_on:
       compound_api:
         condition: service_healthy

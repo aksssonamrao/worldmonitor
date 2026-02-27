@@ -1,17 +1,17 @@
 html, body, #app { margin: 0; height: 100%; width: 100%; font-family: Inter, system-ui, sans-serif; }
-.app-shell { position: relative; width: 100%; height: 100%; background: #0f172a; color: #e2e8f0; }
+.app-shell { position: relative; width: 100%; height: 100%; background: radial-gradient(circle at top, #111b35 0%, #0b1220 55%, #070b15 100%); color: #e2e8f0; }
 #map { position: absolute; inset: 0; }
-.panel { position: absolute; top: 16px; z-index: 3; background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 12px; backdrop-filter: blur(4px); padding: 12px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100% - 140px); overflow: auto; }
-.panel-left { left: 16px; width: 260px; }
-.panel-right { right: 16px; width: 280px; }
-.panel label { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
-.panel input { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px; }
-button { background: #1d4ed8; color: white; border: none; border-radius: 8px; padding: 8px; cursor: pointer; }
-.route-card { width: 100%; text-align: left; background: rgba(30, 41, 59, 0.9); display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
-.route-card.selected { outline: 2px solid #60a5fa; }
-.drawer { position: absolute; left: 50%; transform: translateX(-50%); bottom: 16px; width: min(900px, calc(100% - 40px)); max-height: 180px; overflow: auto; z-index: 3; background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 12px; padding: 10px; }
-.issue { width: 100%; margin-bottom: 4px; background: #334155; }
-.legend { position: absolute; bottom: 210px; left: 16px; z-index: 3; background: rgba(15, 23, 42, 0.88); padding: 8px; border-radius: 8px; font-size: 12px; }
+.panel { position: absolute; top: 16px; z-index: 3; background: rgba(11, 18, 32, 0.82); border: 1px solid rgba(148, 163, 184, 0.24); border-radius: 16px; backdrop-filter: blur(9px); padding: 14px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100% - 140px); overflow: auto; box-shadow: 0 8px 40px rgba(2, 6, 23, 0.4); }
+.panel-left { left: 16px; width: 272px; }
+.panel-right { right: 16px; width: 300px; }
+.panel h3, .panel h4 { margin: 0 0 4px; }
+.panel label { font-size: 12px; display: flex; flex-direction: column; gap: 4px; color: #cbd5e1; }
+.panel input, .panel textarea { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 8px; }
+button { background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border: none; border-radius: 10px; padding: 9px; cursor: pointer; font-weight: 600; }
+button:hover { filter: brightness(1.08); }
+.route-card { width: 100%; text-align: left; background: rgba(30, 41, 59, 0.75); display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; border: 1px solid rgba(148, 163, 184, 0.1); }
+.route-card.selected { outline: 2px solid #60a5fa; background: rgba(37, 99, 235, 0.25); }
+.drawer { position: absolute; left: 50%; transform: translateX(-50%); bottom: 16px; width: min(900px, calc(100% - 40px)); max-height: 180px; overflow: auto; z-index: 3; background: rgba(11, 18, 32, 0.82); border: 1px solid rgba(148, 163, 184, 0.24); border-radius: 16px; padding: 10px; }
+.issue { width: 100%; margin-bottom: 4px; background: #1f2937; border: 1px solid #334155; }
+.legend { position: absolute; bottom: 210px; left: 16px; z-index: 3; background: rgba(11, 18, 32, 0.86); padding: 8px; border-radius: 10px; font-size: 12px; border: 1px solid rgba(148, 163, 184, 0.2); }
 .gradient { width: 120px; height: 8px; border-radius: 999px; margin-top: 6px; background: linear-gradient(90deg, #2dc937, #e7b416, #cc3232); }
-
-.panel textarea { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px; }
