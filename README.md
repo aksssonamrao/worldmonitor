@@ -39,6 +39,23 @@ The script checks compound, planner, and system status endpoints and prints fres
 - `POST /api/agent/brief` and `POST /api/agent/mitigation` (backend_api).
 
 
+
+## LLM environment variables (backend_api)
+
+Set these in your `.env` (or deployment environment) before enabling Semantic Kernel + Gemini integrations in `backend_api`:
+
+- `GEMINI_API_KEY` (required at runtime when Gemini calls are enabled)
+- `GEMINI_FLASH_MODEL` (optional, default: `gemini-3-flash-preview`)
+- `GEMINI_PRO_MODEL` (optional, default: `gemini-3.1-pro-preview`)
+- `AGENT_DEFAULT_MODEL` (optional, default: `flash`)
+- `AGENT_TEMPERATURE` (optional, default: `0.2`)
+- `AGENT_MAX_TOKENS` (optional, default: `1200`)
+- `AGENT_TIMEOUT_SECONDS` (optional, default: `45`)
+- `AGENT_MAX_TOOL_CALLS` (optional, default: `6`)
+- `AGENT_MAX_EVIDENCE_PER_ROUTE` (optional, default: `30`)
+
+Never commit real API keys or secrets to source control.
+
 ## Durable Job Queue
 
 - Queue storage is Postgres table `job_queue` (created idempotently on backend startup).
@@ -77,3 +94,11 @@ Route scoring cache is persisted in `route_score_cache` and cleaned hourly via `
 ```
 
 This downloads a small-region extract (India by default) and builds tiles into `./valhalla_data`.
+
+## Agents smoke test
+
+```bash
+./scripts/e2e_agents_smoke.sh
+```
+
+This script builds and starts Docker services, waits for `/health`, runs route option/score calls, starts `/api/agents/run`, and polls run status until success/failure.
