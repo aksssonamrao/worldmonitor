@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.api.agent import router as agent_router
+from app.api.agents import router as agents_router
 from app.api.planner import router as planner_router
 from app.api.internal_jobs import router as internal_jobs_router
 from app.domains.compound.main import app as compound_app
@@ -141,4 +142,5 @@ async def aois_passthrough(path: str, request: Request) -> Response:
 
 app.include_router(planner_router)
 app.include_router(agent_router)
+app.include_router(agents_router)
 app.include_router(internal_jobs_router)
